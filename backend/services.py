@@ -46,9 +46,10 @@ def get_weather(connection: sqlite3.Connection, city_id: int) -> dict[str, Any] 
         return None
     weather = row_data(connection.execute("SELECT * FROM weather_observations WHERE city_id = ? ORDER BY observed_at DESC LIMIT 1", (city_id,)).fetchone())
     if not weather:
-        return {"city": city, "date": date.today().isoformat(), "observed_at": None, "weather": None, "air_quality": None, "atmosphere": None}
+        return {"city": city, "date": date.today().isoformat(), "observed_at": None, "weather": None, "air_quality": None, "atmosphere": None, "poem": None}
     air_quality = row_data(connection.execute("SELECT aqi, pm25_ug_m3, pm10_ug_m3, primary_pollutant FROM air_quality_observations WHERE weather_observation_id = ?", (weather["id"],)).fetchone())
     atmosphere = row_data(connection.execute("SELECT stability_level, lapse_rate_c_per_km, pressure_hpa, explanation, calculation_version FROM atmosphere_analyses WHERE weather_observation_id = ?", (weather["id"],)).fetchone())
+    poem = row_data(connection.execute("SELECT content, model_name, generated_at FROM poems WHERE weather_observation_id = ?", (weather["id"],)).fetchone())
     return {
         "city": {key: city[key] for key in ("id", "name", "longitude", "latitude")},
         "date": weather["observation_date"],
@@ -56,6 +57,7 @@ def get_weather(connection: sqlite3.Connection, city_id: int) -> dict[str, Any] 
         "weather": {"temperature_c": weather["temperature_c"], "feels_like_c": weather["feels_like_c"], "text": weather["weather_text"], "code": weather["weather_code"], "humidity_percent": weather["humidity_percent"], "wind_speed_ms": weather["wind_speed_ms"], "wind_direction": weather["wind_direction"], "precipitation_probability_percent": weather["precipitation_probability_percent"], "visibility_km": weather["visibility_km"]},
         "air_quality": air_quality,
         "atmosphere": atmosphere,
+        "poem": poem,
     }
 
 

@@ -8,7 +8,9 @@ import sqlite3
 from typing import Any
 
 from .config import get_qweather_settings
+from .external.deepseek_api import DeepSeekError
 from .external.qweather_api import QWeatherClient, QWeatherError
+from .poem_service import generate_city_poem
 
 
 def refresh_active_route_weather(connection: sqlite3.Connection) -> dict[str, Any]:
@@ -20,17 +22,41 @@ def refresh_active_route_weather(connection: sqlite3.Connection) -> dict[str, An
            JOIN routes r ON r.id = rs.route_id
            WHERE r.is_active = 1 ORDER BY c.id"""
     ).fetchall()
-    results: list[dict[str, str]] = []
+    results: list[dict[str, Any]] = []
+    updated_city_ids: list[int] = []
     for city in cities:
         try:
             weather = client.get_current_weather(city["city_code"])
             air_quality = client.get_current_air_quality(city["latitude"], city["longitude"])
             _save_snapshot(connection, city["id"], weather, air_quality)
             results.append({"city_name": city["name"], "status": "updated"})
+            updated_city_ids.append(city["id"])
         except QWeatherError as error:
             results.append({"city_name": city["name"], "status": "failed", "reason": str(error)})
+    poem_results = _generate_poems(connection, updated_city_ids)
     updated_count = sum(result["status"] == "updated" for result in results)
-    return {"date": date.today().isoformat(), "updated_count": updated_count, "cities": results}
+    return {"date": date.today().isoformat(), "updated_count": updated_count, "cities": results, "poems": poem_results}
+
+
+def _generate_poems(connection: sqlite3.Connection, city_ids: list[int]) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for city_id in city_ids:
+        connection.execute(
+            """DELETE FROM poems
+               WHERE weather_observation_id = (
+                   SELECT id FROM weather_observations WHERE city_id = ? ORDER BY observed_at DESC LIMIT 1
+               )""",
+            (city_id,),
+        )
+        try:
+            poem = generate_city_poem(connection, city_id)
+            if poem:
+                results.append({"city_id": city_id, "city_name": poem["city_name"], "status": "generated"})
+            else:
+                results.append({"city_id": city_id, "status": "failed", "reason": "城市没有可用于生成诗歌的天气数据"})
+        except DeepSeekError as error:
+            results.append({"city_id": city_id, "status": "failed", "reason": str(error)})
+    return results
 
 
 def _save_snapshot(connection: sqlite3.Connection, city_id: int, weather, air_quality) -> None:

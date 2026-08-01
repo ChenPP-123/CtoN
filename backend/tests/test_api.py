@@ -36,15 +36,25 @@ def test_unknown_city_returns_documented_not_found_response() -> None:
     assert response.json()["code"] == 40401
 
 
-def test_city_poem_returns_generated_text(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "backend.main.generate_city_poem",
-        lambda connection, city_id: {"city_id": city_id, "city_name": "重庆", "poem": "雾从站台缓缓升起"},
-    )
+def test_city_weather_returns_saved_poem() -> None:
+    with TestClient(app) as client:
+        with open_database() as connection:
+            observation = connection.execute("SELECT id FROM weather_observations WHERE city_id = 1").fetchone()
+            connection.execute(
+                """INSERT INTO poems (city_id, weather_observation_id, content, model_name, prompt_hash, generated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(weather_observation_id) DO UPDATE SET content = excluded.content""",
+                (1, observation["id"], "巴山云作幕，江风入夏城。", "test-model", "test-hash", "2026-08-01T08:20:00Z"),
+            )
+        response = client.get("/api/v1/cities/1/weather")
+    assert response.status_code == 200
+    assert response.json()["data"]["poem"]["content"] == "巴山云作幕，江风入夏城。"
+
+
+def test_city_poem_is_not_generated_on_demand() -> None:
     with TestClient(app) as client:
         response = client.post("/api/v1/cities/1/poem")
-    assert response.status_code == 200
-    assert response.json()["data"]["poem"] == "雾从站台缓缓升起"
+    assert response.status_code == 404
 
 
 def test_database_migration_adds_station_coordinates(monkeypatch, tmp_path) -> None:

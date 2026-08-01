@@ -258,13 +258,12 @@ erDiagram
 | `id` | `INTEGER` | PK | 诗歌 ID |
 | `city_id` | `INTEGER` | NOT NULL, FK `cities.id` RESTRICT | 城市 |
 | `weather_observation_id` | `INTEGER` | NOT NULL, FK `weather_observations.id` RESTRICT | 生成时使用的天气 |
-| `poem_date` | `TEXT` | NOT NULL | 诗歌业务日期 |
-| `content` | `TEXT` | NOT NULL | 两句诗正文 |
+| `content` | `TEXT` | NOT NULL | 两句或四句五言、七言绝句正文 |
 | `model_name` | `TEXT` | NOT NULL | AI 模型名称，如 `deepseek-chat` |
 | `prompt_hash` | `TEXT` | NULL | Prompt 哈希，用于去重和审计 |
 | `generated_at` | `TEXT` | NOT NULL | 生成时间 |
 
-建议唯一约束：`(city_id, poem_date, weather_observation_id)`。若重新生成，应插入新记录而不是覆盖历史内容。
+唯一约束：`weather_observation_id`。同一条当前天气快照只保留一首诗歌；重新生成时覆盖该快照的诗歌内容。
 
 ### 4.8 `travel_reports`：旅行气象报告
 

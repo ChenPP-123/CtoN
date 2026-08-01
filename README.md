@@ -1,6 +1,6 @@
 # CtoN
 
-重庆至南京高铁沿线的气象可视化演示。天气可从和风天气刷新；配置 DeepSeek 后，页面可依据当前城市观测生成一首短诗。
+重庆至南京高铁沿线的气象可视化演示。天气可从和风天气刷新；配置 DeepSeek 后，每次完成沿线天气刷新会自动为成功更新的城市生成一首短诗。
 
 ## 外部 API 配置
 
@@ -10,7 +10,7 @@
 cp .env.example .env
 ```
 
-DeepSeek 只需要设置 `DEEPSEEK_API_KEY`。`DEEPSEEK_BASE_URL=https://api.deepseek.com` 与 `DEEPSEEK_MODEL=deepseek-v4-flash` 可保留默认值。完成后重启后端，选择城市并点击“生成诗歌”。
+DeepSeek 只需要设置 `DEEPSEEK_API_KEY`。`DEEPSEEK_BASE_URL=https://api.deepseek.com` 与 `DEEPSEEK_MODEL=deepseek-v4-flash` 可保留默认值。完成后重启后端，点击“更新观测”；天气全部获取完成后，后端会自动为成功城市生成两句或四句的五言、七言绝句。城市切换只读取已保存的诗歌，不会再次调用模型。
 
 地图使用高德地图 JavaScript API 2.0。需要设置三个变量：`VITE_AMAP_JS_KEY` 是浏览器加载 SDK 使用的 Key，必须在高德控制台限制为实际前端域名；`AMAP_SECURITY_JS_CODE` 和用于维护固定站点坐标的 `AMAP_WEB_SERVICE_KEY` 只保存在后端 `.env`。安全密钥通过后端的 `/_AMapService/` 同源代理注入，不会进入 Vue 源码。未配置 JS Key 或地图加载失败时，页面会显示可点击的站点列表，天气功能仍可使用。
 

@@ -350,29 +350,6 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 
 `points` 必须按 `station_order` 升序返回。某城市没有数据时，该城市仍可出现在 `points` 中，对应指标为 `null`；`missing_city_ids` 用于前端提示数据缺失。
 
-### 4.7 获取城市诗歌
-
-#### `GET /cities/{city_id}/poem`
-
-查询参数：
-
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|---|---|---:|---|---|
-| `date` | string | 否 | 当前 UTC 日期 | `YYYY-MM-DD` |
-
-响应 `data`：
-
-```json
-{
-  "city_id": 1,
-  "city_name": "重庆",
-  "date": "2026-07-30",
-  "content": "巴山云作幕，江风入夏城。",
-  "model_name": "deepseek-chat",
-  "generated_at": "2026-07-30T08:20:00Z"
-}
-```
-
 ### 4.8 随机气象旅行
 
 #### `GET /routes/{route_id}/random-trip`
@@ -513,10 +490,11 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 
 - 后端配置：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`；
 - 诗歌生成输入必须来自已保存的天气快照、城市文化和气候信息；
-- 默认生成两句中文诗歌；
+- 点击“更新观测”时，后端先完成所有城市天气获取，再为本次天气更新成功的城市生成诗歌；
+- 诗歌为两句或四句中文绝句，同一首诗统一为五言或七言；服务端校验格式，不合格时重试一次；
 - 成功后写入 `poems`，记录模型名、Prompt 哈希和生成时间；
 - 旅行报告生成成功后写入 `travel_reports`；
-- AI 超时或失败时返回已有内容，首次生成失败则返回 `50201`，不保存半成品。
+- 单城 AI 超时、失败或格式不合格不会使天气刷新失败；该城市不保存半成品，前端在天气详情中收到 `poem: null`。
 
 AI Prompt 不通过前端传入，避免用户覆盖系统约束或扩大生成内容范围。
 

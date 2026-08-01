@@ -14,10 +14,8 @@ from fastapi.responses import JSONResponse
 from .database import connect, initialize_database, open_database
 from .schemas import ApiResponse
 from .seed import seed_database
-from .poem_service import generate_city_poem
 from .services import get_city, get_route, get_weather, get_weather_profile, list_routes
 from .weather_service import refresh_active_route_weather
-from .external.deepseek_api import DeepSeekError
 from .external.qweather_api import QWeatherError
 from .config import get_amap_settings
 from .external.amap_api import AMapError, forward_sdk_request
@@ -109,18 +107,6 @@ def city_weather(city_id: int, request: Request):
     if not weather:
         raise HTTPException(status_code=404)
     return response(weather, request)
-
-
-@app.post("/api/v1/cities/{city_id}/poem")
-def city_poem(city_id: int, request: Request):
-    try:
-        with connect() as connection:
-            poem = generate_city_poem(connection, city_id)
-    except DeepSeekError as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
-    if not poem:
-        raise HTTPException(status_code=404)
-    return response(poem, request)
 
 
 @app.get("/api/v1/routes/{route_id}/weather-profile")
