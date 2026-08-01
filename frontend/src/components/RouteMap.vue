@@ -6,6 +6,8 @@ const props = defineProps({
   stations: { type: Array, default: () => [] },
   geometry: { type: Object, default: null },
   selectedCityId: { type: Number, default: 1 },
+  previousCityId: { type: Number, default: null },
+  themeColor: { type: String, default: '#d97847' },
 })
 const emit = defineEmits(['select'])
 
@@ -15,6 +17,7 @@ const hasUsableCoordinates = computed(() => props.stations.length > 0 && props.s
 let map
 let AMap
 let polyline
+let pulsePolyline
 const stationMarkers = new Map()
 
 function positionOf(station) {
@@ -42,7 +45,23 @@ function focusSelectedStation() {
   const marker = stationMarkers.get(props.selectedCityId)
   if (!marker) return
   updateSelectedMarker()
-  map.setCenter(marker.position)
+  map.panTo(marker.position, 450)
+  pulseRoute()
+}
+
+function pulseRoute() {
+  if (!map || !props.previousCityId || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  const from = props.stations.findIndex((station) => station.city_id === props.previousCityId)
+  const to = props.stations.findIndex((station) => station.city_id === props.selectedCityId)
+  if (from < 0 || to < 0) return
+  const segment = props.stations.slice(Math.min(from, to), Math.max(from, to) + 1).map(positionOf)
+  pulsePolyline?.setMap(null)
+  pulsePolyline = new AMap.Polyline({ path: segment, strokeColor: props.themeColor, strokeWeight: 9, strokeOpacity: .95, zIndex: 15 })
+  map.add(pulsePolyline)
+  window.setTimeout(() => {
+    pulsePolyline?.setMap(null)
+    pulsePolyline = undefined
+  }, 500)
 }
 
 function routeCoordinates() {
@@ -58,7 +77,7 @@ async function initializeMap() {
   try {
     AMap = await loadAMap()
     await nextTick()
-    map = new AMap.Map(mapElement.value, { viewMode: '2D', zoom: 6, center: positionOf(props.stations[0]), mapStyle: 'amap://styles/darkblue' })
+    map = new AMap.Map(mapElement.value, { viewMode: '2D', zoom: 6, center: positionOf(props.stations[0]), mapStyle: 'amap://styles/normal' })
     for (const station of props.stations) {
       const element = createMarkerElement(station)
       const position = positionOf(station)
@@ -67,7 +86,7 @@ async function initializeMap() {
       stationMarkers.set(station.city_id, { marker, element, position })
       map.add(marker)
     }
-    polyline = new AMap.Polyline({ path: routeCoordinates(), strokeColor: '#ffbd59', strokeWeight: 5, strokeOpacity: 0.9, strokeStyle: 'dashed', zIndex: 10 })
+    polyline = new AMap.Polyline({ path: routeCoordinates(), strokeColor: props.themeColor, strokeWeight: 5, strokeOpacity: .82, strokeStyle: 'dashed', zIndex: 10 })
     map.add(polyline)
     map.setFitView([...stationMarkers.values()].map(({ marker }) => marker).concat(polyline), false, [54, 80, 54, 80])
     updateSelectedMarker()
@@ -77,6 +96,7 @@ async function initializeMap() {
 }
 
 watch(() => props.selectedCityId, focusSelectedStation)
+watch(() => props.themeColor, (color) => polyline?.setOptions({ strokeColor: color }))
 
 onMounted(initializeMap)
 onBeforeUnmount(() => {

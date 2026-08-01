@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from './api'
+import { visualForCity } from './content/cityVisuals'
 import ProfileChart from './components/ProfileChart.vue'
 import RouteMap from './components/RouteMap.vue'
 import WeatherPanel from './components/WeatherPanel.vue'
@@ -9,19 +10,37 @@ const route = ref(null)
 const profile = ref(null)
 const weather = ref(null)
 const selectedCityId = ref(1)
+const previousCityId = ref(null)
 const activeMetric = ref('temperature')
 const loading = ref(true)
 const refreshing = ref(false)
+const traveling = ref(false)
 const error = ref('')
+const heroImageFailed = ref(false)
 const metrics = [['temperature', '温度'], ['humidity', '湿度'], ['aqi', 'AQI'], ['wind_speed', '风速']]
 const selectedCity = computed(() => route.value?.stations.find((station) => station.city_id === selectedCityId.value))
+const visual = computed(() => visualForCity(selectedCity.value?.city_name, weather.value?.weather?.text, weather.value?.date))
+const themeStyle = computed(() => ({ '--theme-primary': visual.value.primary, '--theme-accent': visual.value.accent, '--hero-overlay': visual.value.overlay, '--hero-fallback': visual.value.gradient }))
 
 async function selectCity(cityId) {
+  if (cityId === selectedCityId.value && weather.value) return
+  previousCityId.value = selectedCityId.value
   selectedCityId.value = cityId
   weather.value = null
+  heroImageFailed.value = false
   try {
     weather.value = await api.getWeather(cityId)
-  } catch (exception) { error.value = exception.message }
+  } catch (exception) {
+    error.value = exception.message
+  }
+}
+
+async function randomTravel() {
+  const choices = route.value.stations.filter((station) => station.city_id !== selectedCityId.value)
+  const destination = choices[Math.floor(Math.random() * choices.length)]
+  traveling.value = true
+  await selectCity(destination.city_id)
+  traveling.value = false
 }
 
 async function load() {
@@ -32,7 +51,11 @@ async function load() {
     route.value = routeData
     profile.value = profileData
     await selectCity(selectedCityId.value)
-  } catch (exception) { error.value = exception.message } finally { loading.value = false }
+  } catch (exception) {
+    error.value = exception.message
+  } finally {
+    loading.value = false
+  }
 }
 
 async function refresh() {
@@ -41,23 +64,60 @@ async function refresh() {
   try {
     await api.refreshWeather()
     await load()
-  } catch (exception) { error.value = exception.message } finally { refreshing.value = false }
+  } catch (exception) {
+    error.value = exception.message
+  } finally {
+    refreshing.value = false
+  }
+}
+
+function useFallbackImage(event) {
+  if (!heroImageFailed.value && event.target.src !== new URL(visual.value.fallbackImage, window.location.origin).href) {
+    heroImageFailed.value = true
+    event.target.src = visual.value.fallbackImage
+    return
+  }
+  event.target.hidden = true
 }
 
 onMounted(load)
 </script>
 
 <template>
-  <main class="app-shell">
-    <header class="site-header"><a class="brand" href="#top">Cto<span>N</span></a><p>CHONGQING TO NANJING · 气象旅行观测站</p><button class="refresh-button" :disabled="refreshing" @click="refresh">{{ refreshing ? '更新中…' : '更新观测' }}</button></header>
-    <div v-if="error" class="error-state"><p>{{ error }}</p><button @click="load">重新加载</button></div>
+  <main class="app-shell" :style="themeStyle">
+    <header class="site-header">
+      <a class="brand" href="#top">Cto<span>N</span></a>
+      <p>重庆北 → 南京南 · 沿线气象观测</p>
+      <button class="refresh-button" :disabled="refreshing" @click="refresh">{{ refreshing ? '更新中…' : '更新观测' }}</button>
+    </header>
+    <div v-if="error && !route" class="error-state"><p>{{ error }}</p><button @click="load">重新加载</button></div>
     <template v-else-if="!loading && route && profile">
-      <section id="top" class="intro"><div><p class="eyebrow">沿线气象空间变化</p><h1>一趟 1200 公里的<br><em>天气列车</em></h1></div><p class="intro-copy">从巴山湿雾出发，穿过江城晴热，抵达金陵雨意。选择任一站点，读取这条高铁线上的当地观测。</p></section>
-      <section class="dashboard"><RouteMap :stations="route.stations" :geometry="route.geometry" :selected-city-id="selectedCityId" @select="selectCity" /><WeatherPanel :weather-data="weather" :city="weather?.city" /></section>
-      <section class="poem-section" aria-live="polite"><div><p class="eyebrow">WEATHER VERSE</p><h2>把此刻写成一首诗</h2><p>以 {{ selectedCity?.city_name }} 当前观测为引，在更新观测后生成一首绝句。</p></div><div class="poem-action"><p v-if="weather?.poem" class="poem-text">{{ weather.poem.content }}</p><p v-else class="poem-placeholder">该次观测暂无诗歌，请更新观测后重试。</p></div></section>
-      <section class="profile-section"><div class="profile-heading"><div><p class="eyebrow">DISTANCE PROFILE</p><h2>沿线观测剖面</h2></div><p>横轴以距重庆北站的实际距离排列</p></div><div class="metric-tabs" role="tablist"><button v-for="[key, label] in metrics" :key="key" :class="{ active: activeMetric === key }" role="tab" :aria-selected="activeMetric === key" @click="activeMetric = key">{{ label }}</button></div><ProfileChart :points="profile.points" :selected-city-id="selectedCityId" :metric="activeMetric" /></section>
-      <nav class="station-nav" aria-label="城市切换"><button v-for="station in route.stations" :key="station.city_id" :class="{ active: station.city_id === selectedCityId }" @click="selectCity(station.city_id)"><span>0{{ station.station_order }}</span>{{ station.city_name }}<small>{{ station.station_name }}</small></button></nav>
+      <section id="top" class="journey-stage">
+        <RouteMap :stations="route.stations" :geometry="route.geometry" :selected-city-id="selectedCityId" :previous-city-id="previousCityId" :theme-color="visual.primary" @select="selectCity" />
+        <section class="hero" :key="selectedCityId" :style="{ background: visual.gradient }" aria-live="polite">
+          <img class="hero-image" :src="visual.image" :alt="`${selectedCity?.city_name}当地天气景象`" @error="useFallbackImage">
+          <div class="hero-wash"></div>
+          <div class="hero-copy" :class="`tone-${visual.textTone}`">
+            <p class="eyebrow">第 {{ String(selectedCity?.station_order || 1).padStart(2, '0') }} 站 · {{ weather?.date || '读取观测中' }}</p>
+            <h1>{{ selectedCity?.city_name }}</h1>
+            <p class="city-phrase">{{ visual.phrase }}</p>
+            <p v-if="weather?.poem" class="hero-poem">{{ weather.poem.content }}</p>
+            <p v-else class="hero-poem placeholder">正在等候这座城市的诗句…</p>
+          </div>
+          <button class="random-button" :disabled="traveling" @click="randomTravel">{{ traveling ? `前往 ${selectedCity?.city_name}…` : '随机旅行' }} <span aria-hidden="true">↗</span></button>
+        </section>
+      </section>
+      <section class="observatory" aria-label="当前城市气象观测台">
+        <WeatherPanel :weather-data="weather" :city="weather?.city" />
+        <div class="profile-area">
+          <div class="profile-heading"><div><p class="eyebrow">ROUTE OBSERVATORY</p><h2>沿线观测剖面</h2></div><p>从重庆北站起算的真实距离</p></div>
+          <div class="metric-tabs" role="tablist" aria-label="观测指标"><button v-for="[key, label] in metrics" :key="key" :class="{ active: activeMetric === key }" role="tab" :aria-selected="activeMetric === key" @click="activeMetric = key">{{ label }}</button></div>
+          <ProfileChart :points="profile.points" :selected-city-id="selectedCityId" :metric="activeMetric" :theme-color="visual.primary" />
+        </div>
+      </section>
+      <p v-if="error" class="inline-error">{{ error }} <button @click="selectCity(selectedCityId)">重试</button></p>
+      <nav class="station-nav" aria-label="城市切换"><button v-for="station in route.stations" :key="station.city_id" :class="{ active: station.city_id === selectedCityId }" :aria-current="station.city_id === selectedCityId ? 'true' : undefined" @click="selectCity(station.city_id)"><span>{{ String(station.station_order).padStart(2, '0') }}</span><strong>{{ station.city_name }}</strong><small>{{ station.station_name }}</small></button></nav>
     </template>
-    <div v-else class="loading-state">正在调度这趟气象列车<span>.</span><span>.</span><span>.</span></div>
+    <div v-else class="loading-state">正在读取沿线观测…</div>
   </main>
 </template>
