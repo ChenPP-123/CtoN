@@ -85,15 +85,9 @@ onMounted(load)
 
 <template>
   <main class="app-shell" :style="themeStyle">
-    <header class="site-header">
-      <a class="brand" href="#top">Cto<span>N</span></a>
-      <p>重庆北 → 南京南 · 沿线气象观测</p>
-      <button class="refresh-button" :disabled="refreshing" @click="refresh">{{ refreshing ? '更新中…' : '更新观测' }}</button>
-    </header>
     <div v-if="error && !route" class="error-state"><p>{{ error }}</p><button @click="load">重新加载</button></div>
     <template v-else-if="!loading && route && profile">
-      <section id="top" class="journey-stage">
-        <RouteMap :stations="route.stations" :geometry="route.geometry" :selected-city-id="selectedCityId" :previous-city-id="previousCityId" :theme-color="visual.primary" @select="selectCity" />
+      <section id="top" class="city-stage">
         <section class="hero" :key="selectedCityId" :style="{ background: visual.gradient }" aria-live="polite">
           <img class="hero-image" :src="visual.image" :alt="`${selectedCity?.city_name}当地天气景象`" @error="useFallbackImage">
           <div class="hero-wash"></div>
@@ -104,18 +98,26 @@ onMounted(load)
             <p v-if="weather?.poem" class="hero-poem">{{ weather.poem.content }}</p>
             <p v-else class="hero-poem placeholder">正在等候这座城市的诗句…</p>
           </div>
-          <button class="random-button" :disabled="traveling" @click="randomTravel">{{ traveling ? `前往 ${selectedCity?.city_name}…` : '随机旅行' }} <span aria-hidden="true">↗</span></button>
         </section>
+        <header class="site-header">
+          <a class="brand" href="#top">Cto<span>N</span></a>
+          <p>重庆北 → 南京南 · 沿线气象观测</p>
+          <button class="refresh-button" :disabled="refreshing" @click="refresh">{{ refreshing ? '更新中…' : '更新观测' }}</button>
+        </header>
+        <aside class="map-dock">
+          <RouteMap :stations="route.stations" :geometry="route.geometry" :selected-city-id="selectedCityId" :previous-city-id="previousCityId" :theme-color="visual.primary" @select="selectCity" />
+          <button class="random-button" :disabled="traveling" @click="randomTravel"><span class="travel-mark" aria-hidden="true">⌁</span>{{ traveling ? `前往 ${selectedCity?.city_name}…` : '随机旅行' }} <b aria-hidden="true">›</b></button>
+        </aside>
+        <section class="observatory" aria-label="当前城市气象观测台">
+          <WeatherPanel :weather-data="weather" :city="weather?.city" />
+          <div class="profile-area">
+            <div class="profile-heading"><div><p class="eyebrow">ROUTE OBSERVATORY</p><h2>沿线观测剖面</h2></div><p>从重庆北站起算的真实距离</p></div>
+            <div class="metric-tabs" role="tablist" aria-label="观测指标"><button v-for="[key, label] in metrics" :key="key" :class="{ active: activeMetric === key }" role="tab" :aria-selected="activeMetric === key" @click="activeMetric = key">{{ label }}</button></div>
+            <ProfileChart :points="profile.points" :selected-city-id="selectedCityId" :metric="activeMetric" :theme-color="visual.primary" />
+          </div>
+        </section>
+        <p v-if="error" class="inline-error">{{ error }} <button @click="selectCity(selectedCityId)">重试</button></p>
       </section>
-      <section class="observatory" aria-label="当前城市气象观测台">
-        <WeatherPanel :weather-data="weather" :city="weather?.city" />
-        <div class="profile-area">
-          <div class="profile-heading"><div><p class="eyebrow">ROUTE OBSERVATORY</p><h2>沿线观测剖面</h2></div><p>从重庆北站起算的真实距离</p></div>
-          <div class="metric-tabs" role="tablist" aria-label="观测指标"><button v-for="[key, label] in metrics" :key="key" :class="{ active: activeMetric === key }" role="tab" :aria-selected="activeMetric === key" @click="activeMetric = key">{{ label }}</button></div>
-          <ProfileChart :points="profile.points" :selected-city-id="selectedCityId" :metric="activeMetric" :theme-color="visual.primary" />
-        </div>
-      </section>
-      <p v-if="error" class="inline-error">{{ error }} <button @click="selectCity(selectedCityId)">重试</button></p>
       <nav class="station-nav" aria-label="城市切换"><button v-for="station in route.stations" :key="station.city_id" :class="{ active: station.city_id === selectedCityId }" :aria-current="station.city_id === selectedCityId ? 'true' : undefined" @click="selectCity(station.city_id)"><span>{{ String(station.station_order).padStart(2, '0') }}</span><strong>{{ station.city_name }}</strong><small>{{ station.station_name }}</small></button></nav>
     </template>
     <div v-else class="loading-state">正在读取沿线观测…</div>
