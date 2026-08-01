@@ -66,6 +66,8 @@ def initialize_database() -> None:
                 station_order INTEGER NOT NULL,
                 distance_from_origin_km REAL NOT NULL,
                 station_name TEXT NOT NULL,
+                longitude REAL NOT NULL,
+                latitude REAL NOT NULL,
                 UNIQUE(route_id, city_id),
                 UNIQUE(route_id, station_order)
             );
@@ -115,3 +117,13 @@ def initialize_database() -> None:
                 ON weather_observations(city_id, observation_date DESC);
             """
         )
+        _add_route_station_coordinate_columns(connection)
+
+
+def _add_route_station_coordinate_columns(connection: sqlite3.Connection) -> None:
+    """Upgrade databases created before station coordinates were introduced."""
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(route_stations)")}
+    if "longitude" not in columns:
+        connection.execute("ALTER TABLE route_stations ADD COLUMN longitude REAL")
+    if "latitude" not in columns:
+        connection.execute("ALTER TABLE route_stations ADD COLUMN latitude REAL")

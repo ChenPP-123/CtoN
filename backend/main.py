@@ -7,7 +7,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -19,6 +19,8 @@ from .services import get_city, get_route, get_weather, get_weather_profile, lis
 from .weather_service import refresh_active_route_weather
 from .external.deepseek_api import DeepSeekError
 from .external.qweather_api import QWeatherError
+from .config import get_amap_settings
+from .external.amap_api import AMapError, forward_sdk_request
 
 
 @asynccontextmanager
@@ -63,6 +65,17 @@ def health(request: Request):
     with connect() as connection:
         connection.execute("SELECT 1")
     return response({"status": "ok", "database": "ok", "version": "0.1.0"}, request)
+
+
+@app.get("/_AMapService/{path:path}", include_in_schema=False)
+async def amap_service_proxy(path: str, request: Request) -> Response:
+    """Proxy only AMap JavaScript SDK service calls so the security code stays server-side."""
+    try:
+        upstream = await forward_sdk_request(get_amap_settings(), path, list(request.query_params.multi_items()))
+    except AMapError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    content_type = upstream.headers.get("content-type", "application/json")
+    return Response(content=upstream.content, status_code=upstream.status_code, media_type=content_type)
 
 
 @app.get("/api/v1/routes")

@@ -87,6 +87,8 @@ erDiagram
         INTEGER station_order
         REAL distance_from_origin_km
         TEXT station_name
+        REAL longitude
+        REAL latitude
     }
     weather_observations {
         INTEGER id PK
@@ -194,6 +196,8 @@ erDiagram
 | `station_order` | `INTEGER` | NOT NULL, CHECK >= 1 | 沿线顺序，从 1 开始 |
 | `distance_from_origin_km` | `REAL` | NOT NULL, CHECK >= 0 | 距起点距离 |
 | `station_name` | `TEXT` | NOT NULL | 对应车站名称 |
+| `longitude` | `REAL` | NOT NULL | 高德 GCJ-02 站点经度，与城市天气坐标分离 |
+| `latitude` | `REAL` | NOT NULL | 高德 GCJ-02 站点纬度，与城市天气坐标分离 |
 
 唯一约束：`(route_id, city_id)`、`(route_id, station_order)`。
 

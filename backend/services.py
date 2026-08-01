@@ -27,7 +27,7 @@ def get_route(connection: sqlite3.Connection, route_id: int) -> dict[str, Any] |
     route["geometry"] = {"type": "LineString", "coordinates": json.loads(route.pop("geometry_json"))}
     stations = connection.execute(
         """SELECT rs.city_id, c.name AS city_name, rs.station_name, rs.station_order,
-                  rs.distance_from_origin_km, c.longitude, c.latitude
+                  rs.distance_from_origin_km, rs.longitude, rs.latitude
            FROM route_stations rs JOIN cities c ON c.id = rs.city_id
            WHERE rs.route_id = ? ORDER BY rs.station_order""",
         (route_id,),

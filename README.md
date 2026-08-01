@@ -12,6 +12,8 @@ cp .env.example .env
 
 DeepSeek 只需要设置 `DEEPSEEK_API_KEY`。`DEEPSEEK_BASE_URL=https://api.deepseek.com` 与 `DEEPSEEK_MODEL=deepseek-v4-flash` 可保留默认值。完成后重启后端，选择城市并点击“生成诗歌”。
 
+地图使用高德地图 JavaScript API 2.0。需要设置三个变量：`VITE_AMAP_JS_KEY` 是浏览器加载 SDK 使用的 Key，必须在高德控制台限制为实际前端域名；`AMAP_SECURITY_JS_CODE` 和用于维护固定站点坐标的 `AMAP_WEB_SERVICE_KEY` 只保存在后端 `.env`。安全密钥通过后端的 `/_AMapService/` 同源代理注入，不会进入 Vue 源码。未配置 JS Key 或地图加载失败时，页面会显示可点击的站点列表，天气功能仍可使用。
+
 ## 本地运行
 
 终端一：启动后端（首次需要安装依赖）。
@@ -30,7 +32,7 @@ npm install
 npm run dev
 ```
 
-打开 Vite 显示的本地地址（通常是 `http://localhost:5173`）。前端开发服务器会把 `/api` 请求代理给 `http://localhost:8000`。
+打开 Vite 显示的本地地址（通常是 `http://localhost:5173`）。前端开发服务器会把 `/api` 和 `/_AMapService` 请求代理给 `http://localhost:8000`。生产环境的反向代理也必须将这两个路径转发到 FastAPI，且将生产域名加入高德 JS Key 的白名单。
 
 ## 验证
 

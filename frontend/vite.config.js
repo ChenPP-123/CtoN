@@ -3,5 +3,6 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   plugins: [vue()],
-  server: { proxy: { '/api': 'http://localhost:8000' } },
+  envDir: '..',
+  server: { proxy: { '/api': 'http://localhost:8000', '/_AMapService': 'http://localhost:8000' } },
 })

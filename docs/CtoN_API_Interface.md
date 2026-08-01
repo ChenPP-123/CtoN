@@ -18,7 +18,7 @@ AI：DeepSeek API（暂定）
 - 获取已生成的天气诗歌；
 - 按日期生成并查询旅行气象报告。
 
-前端只访问 CtoN 后端接口，不直接调用和风天气、DeepSeek。地图展示使用高德地图 JavaScript SDK，路线和城市数据由 CtoN 后端提供。
+前端只访问 CtoN 后端接口，不直接调用和风天气、DeepSeek。地图展示使用高德地图 JavaScript SDK，路线和城市数据由 CtoN 后端提供。地图安全服务请求经同源 `/_AMapService/` 代理转发；它不是业务 API。
 
 ## 2. 基础约定
 
@@ -178,7 +178,7 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
     "name": "重庆至南京高铁沿线",
     "origin_city_name": "重庆",
     "destination_city_name": "南京",
-    "total_distance_km": 1200,
+    "total_distance_km": 1245,
     "is_active": true
   }
 ]
@@ -203,10 +203,10 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
   "name": "重庆至南京高铁沿线",
   "origin_city_name": "重庆",
   "destination_city_name": "南京",
-  "total_distance_km": 1200,
+  "total_distance_km": 1245,
   "geometry": {
     "type": "LineString",
-    "coordinates": [[106.5516, 29.5630], [114.3054, 30.5931], [118.7969, 32.0603]]
+    "coordinates": [[106.5500, 29.6145], [108.3968, 30.7988], [109.4859, 30.2911], [111.3856, 30.6466], [112.2451, 30.3478], [114.4252, 30.6095], [117.3097, 31.7936], [118.7982, 31.9517]]
   },
   "stations": [
     {
@@ -215,14 +215,14 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
       "station_name": "重庆北站",
       "station_order": 1,
       "distance_from_origin_km": 0.0,
-      "longitude": 106.5516,
-      "latitude": 29.5630
+      "longitude": 106.5500,
+      "latitude": 29.6145
     }
   ]
 }
 ```
 
-`geometry` 为空时，前端仍应使用 `stations` 绘制节点并展示页面，不应因地图路线缺失而阻塞天气功能。
+`stations.longitude` 与 `stations.latitude` 是高德 GCJ-02 坐标系下的站点位置，和城市天气坐标分开维护。固定 8 个站点按顺序为重庆北、万州北、恩施、宜昌东、荆州、武汉、合肥南、南京南；`geometry` 按同一顺序生成。`geometry` 为空时，前端仍应使用 `stations` 绘制节点并展示页面，不应因地图路线缺失而阻塞天气功能。
 
 ### 4.4 获取城市基本信息
 
@@ -496,13 +496,14 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 
 ### 5.2 高德地图 API
 
-暂定用于地图展示、地理编码和路线坐标：
+用于地图展示与固定站点坐标维护：
 
-- 高德 Web 服务 Key 仅保存在后端环境变量中；
-- 地理编码结果用于初始化 `cities.longitude` 和 `cities.latitude`；
-- 路线查询结果转换为 `routes.geometry_json`；
-- 前端地图只接收 GeoJSON 风格的 `geometry` 和城市节点；
-- 高德不可用时，前端仍可展示城市列表和天气数据。
+- `AMAP_WEB_SERVICE_KEY` 仅用于维护时以地点搜索/地理编码核验固定站点，不能进入前端；
+- `AMAP_SECURITY_JS_CODE` 由后端 `/_AMapService/` 代理请求附加，不能进入前端；
+- `VITE_AMAP_JS_KEY` 会在浏览器加载 SDK 时使用，必须限制允许域名；
+- 前端只接收 GeoJSON 风格的 `geometry` 和站点节点，不在页面加载时调用地点搜索或路线规划；
+- 固定高铁示范主线不用高德路线规划 API，因为其公交/驾车结果不代表高铁轨迹；
+- 高德不可用时，前端仍可展示站点列表和天气数据。
 
 如果使用高德地图 JavaScript SDK，浏览器端所需的安全配置只能使用受域名限制的前端 Key，不能把高权限 Web 服务 Key 写入 Vue 源码。
 
@@ -578,7 +579,9 @@ QWEATHER_API_KEY=
 QWEATHER_BASE_URL=
 
 AMAP_WEB_SERVICE_KEY=
-AMAP_BASE_URL=
+AMAP_SECURITY_JS_CODE=
+VITE_AMAP_JS_KEY=
+AMAP_BASE_URL=https://restapi.amap.com
 
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
@@ -608,4 +611,3 @@ backend/external/
 ```
 
 路由层只负责参数校验、状态码和响应模型；业务查询、数据更新和外部 API 调用放在 service 层；数据库模型不直接作为公共 API 响应模型，避免内部字段变化影响前端。
-
