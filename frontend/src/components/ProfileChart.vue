@@ -1,0 +1,36 @@
+<script setup>
+import * as echarts from 'echarts'
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+
+const props = defineProps({ points: { type: Array, default: () => [] }, selectedCityId: { type: Number, default: 1 }, metric: { type: String, default: 'temperature' } })
+const element = ref(null)
+let chart
+const metrics = {
+  temperature: { label: '温度', field: 'temperature_c', unit: '°C', color: '#ffbd59' },
+  humidity: { label: '湿度', field: 'humidity_percent', unit: '%', color: '#6fd8ef' },
+  aqi: { label: 'AQI', field: 'aqi', unit: '', color: '#ff8270' },
+  wind_speed: { label: '风速', field: 'wind_speed_ms', unit: ' m/s', color: '#a79eff' },
+}
+
+function render() {
+  if (!element.value) return
+  chart ??= echarts.init(element.value)
+  const current = metrics[props.metric]
+  const data = props.points.map((point) => ({ value: point[current.field], selected: point.city_id === props.selectedCityId, name: point.city_name, distance: point.distance_from_origin_km }))
+  chart.setOption({
+    animationDuration: 350,
+    grid: { left: 45, right: 24, top: 28, bottom: 40 },
+    xAxis: { type: 'category', data: props.points.map((point) => `${point.city_name}\n${point.distance_from_origin_km} km`), axisLine: { lineStyle: { color: '#355467' } }, axisLabel: { color: '#aac1cb', lineHeight: 18 } },
+    yAxis: { type: 'value', axisLine: { show: false }, splitLine: { lineStyle: { color: '#183446' } }, axisLabel: { color: '#aac1cb', formatter: `{value}${current.unit}` } },
+    tooltip: { trigger: 'axis', valueFormatter: (value) => value === null ? '暂无数据' : `${value}${current.unit}` },
+    series: [{ type: 'line', data, connectNulls: false, smooth: .25, symbolSize: (value, params) => params.data.selected ? 14 : 9, lineStyle: { color: current.color, width: 3 }, itemStyle: { color: current.color, borderColor: '#071d2a', borderWidth: 3 }, areaStyle: { color: current.color, opacity: .1 } }],
+  }, true)
+}
+
+watch(() => [props.points, props.selectedCityId, props.metric], async () => { await nextTick(); render() }, { deep: true })
+watch(element, async () => { await nextTick(); render() })
+window.addEventListener('resize', () => chart?.resize())
+onBeforeUnmount(() => { window.removeEventListener('resize', () => chart?.resize()); chart?.dispose() })
+</script>
+
+<template><div ref="element" class="chart" role="img" aria-label="沿线气象变化图"></div></template>
