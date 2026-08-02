@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from './api'
 import { visualForCity } from './content/cityVisuals'
 import ProfileChart from './components/ProfileChart.vue'
@@ -10,8 +10,9 @@ const route = ref(null)
 const profile = ref(null)
 const weather = ref(null)
 const travelAdvice = ref(null)
-const selectedCityId = ref(1)
-const previousCityId = ref(null)
+const selectedCityId = ref(null)
+const trainDestinationCityId = ref(null)
+const autoplayEnabled = ref(true)
 const activeMetric = ref('temperature')
 const loading = ref(true)
 const refreshing = ref(false)
@@ -21,23 +22,66 @@ const adviceError = ref('')
 const traveling = ref(false)
 const error = ref('')
 const heroImageFailed = ref(false)
+const AUTOPLAY_CYCLE_MS = 10_000
+const TRAIN_MOVE_MS = 1_200
 const metrics = [['temperature', '温度'], ['humidity', '湿度'], ['aqi', 'AQI'], ['wind_speed', '风速']]
 const selectedCity = computed(() => route.value?.stations.find((station) => station.city_id === selectedCityId.value))
 const visual = computed(() => visualForCity(selectedCity.value?.city_name, weather.value?.weather?.text, weather.value?.date))
 const themeStyle = computed(() => ({ '--theme-primary': visual.value.primary, '--theme-accent': visual.value.accent, '--hero-overlay': visual.value.overlay, '--hero-fallback': visual.value.gradient }))
 const refreshLabel = computed(() => refreshStage.value === 'weather' ? '更新天气…' : refreshStage.value === 'advice' ? '生成建议…' : '更新观测')
+let departureTimer
+let arrivalTimer
+let weatherRequestId = 0
 
-async function selectCity(cityId) {
-  if (cityId === selectedCityId.value && weather.value) return
+function clearRoutePlayback() {
+  window.clearTimeout(departureTimer)
+  window.clearTimeout(arrivalTimer)
+  departureTimer = undefined
+  arrivalTimer = undefined
+  trainDestinationCityId.value = null
+}
+
+function nextStation() {
+  const stations = route.value?.stations || []
+  const currentIndex = stations.findIndex((station) => station.city_id === selectedCityId.value)
+  if (currentIndex < 0 || stations.length < 2) return null
+  return stations[(currentIndex + 1) % stations.length]
+}
+
+function scheduleRoutePlayback() {
+  clearRoutePlayback()
+  if (!autoplayEnabled.value || document.hidden) return
+  const destination = nextStation()
+  if (!destination) return
+
+  departureTimer = window.setTimeout(() => {
+    trainDestinationCityId.value = destination.city_id
+  }, AUTOPLAY_CYCLE_MS - TRAIN_MOVE_MS)
+  arrivalTimer = window.setTimeout(() => {
+    selectCity(destination.city_id)
+  }, AUTOPLAY_CYCLE_MS)
+}
+
+async function selectCity(cityId, { restartPlayback = true } = {}) {
+  const destination = route.value?.stations.find((station) => station.city_id === cityId)
+  if (!destination) return
+
+  const cityChanged = cityId !== selectedCityId.value
   error.value = ''
-  previousCityId.value = selectedCityId.value
-  selectedCityId.value = cityId
-  weather.value = null
-  heroImageFailed.value = false
+  if (cityChanged) {
+    selectedCityId.value = cityId
+    weather.value = null
+    heroImageFailed.value = false
+  }
+  if (restartPlayback) scheduleRoutePlayback()
+  if (!cityChanged && weather.value) return
+
+  const requestId = ++weatherRequestId
   try {
-    weather.value = await api.getWeather(cityId)
+    const weatherData = await api.getWeather(cityId)
+    if (requestId === weatherRequestId && selectedCityId.value === cityId) weather.value = weatherData
   } catch (exception) {
-    error.value = exception.message
+    if (requestId === weatherRequestId && selectedCityId.value === cityId) error.value = exception.message
   }
 }
 
@@ -61,24 +105,29 @@ async function load() {
     route.value = routeData
     profile.value = profileData
     travelAdvice.value = adviceData
-    await selectCity(selectedCityId.value)
+    selectedCityId.value = routeData.stations[0]?.city_id ?? null
+    if (selectedCityId.value !== null) await selectCity(selectedCityId.value, { restartPlayback: false })
   } catch (exception) {
     error.value = exception.message
   } finally {
     loading.value = false
+    scheduleRoutePlayback()
   }
 }
 
 async function refresh() {
+  clearRoutePlayback()
   refreshing.value = true
   refreshStage.value = 'weather'
   error.value = ''
   adviceError.value = ''
   try {
     await api.refreshWeather()
-    const [profileData, weatherData] = await Promise.all([api.getProfile(1), api.getWeather(selectedCityId.value)])
+    const refreshCityId = selectedCityId.value
+    const requestId = ++weatherRequestId
+    const [profileData, weatherData] = await Promise.all([api.getProfile(1), api.getWeather(refreshCityId)])
     profile.value = profileData
-    weather.value = weatherData
+    if (requestId === weatherRequestId && selectedCityId.value === refreshCityId) weather.value = weatherData
     refreshStage.value = 'advice'
     adviceRefreshing.value = true
     try {
@@ -93,7 +142,19 @@ async function refresh() {
   } finally {
     refreshing.value = false
     refreshStage.value = ''
+    scheduleRoutePlayback()
   }
+}
+
+function toggleAutoplay() {
+  autoplayEnabled.value = !autoplayEnabled.value
+  if (autoplayEnabled.value) scheduleRoutePlayback()
+  else clearRoutePlayback()
+}
+
+function handleVisibilityChange() {
+  if (document.hidden) clearRoutePlayback()
+  else if (autoplayEnabled.value) scheduleRoutePlayback()
 }
 
 function useFallbackImage(event) {
@@ -105,7 +166,14 @@ function useFallbackImage(event) {
   event.target.hidden = true
 }
 
-onMounted(load)
+onMounted(() => {
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  load()
+})
+onBeforeUnmount(() => {
+  clearRoutePlayback()
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+})
 </script>
 
 <template>
@@ -129,7 +197,7 @@ onMounted(load)
           <button class="refresh-button" :disabled="refreshing" @click="refresh">{{ refreshLabel }}</button>
         </header>
         <aside class="map-dock">
-          <RouteMap :stations="route.stations" :geometry="route.geometry" :selected-city-id="selectedCityId" :previous-city-id="previousCityId" :theme-color="visual.primary" @select="selectCity" />
+          <RouteMap :stations="route.stations" :geometry="route.geometry" :selected-city-id="selectedCityId" :train-destination-city-id="trainDestinationCityId" :train-duration-ms="TRAIN_MOVE_MS" :autoplay-enabled="autoplayEnabled" @select="selectCity" @toggle-autoplay="toggleAutoplay" />
           <button class="random-button" :disabled="traveling" @click="randomTravel"><span class="travel-mark" aria-hidden="true">⌁</span>{{ traveling ? `前往 ${selectedCity?.city_name}…` : '随机旅行' }} <b aria-hidden="true">›</b></button>
         </aside>
         <section class="observatory" aria-label="当前城市气象观测台">
