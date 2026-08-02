@@ -25,3 +25,11 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--theme-accent); 
 @media (max-width: 900px) { .observatory { background: rgb(233 237 232 / 68%); } }
 @media (max-width: 520px) { .site-header { min-height: 60px; padding: 0 18px; }.site-header p { display: none; }.hero { min-height: 490px; }.hero-copy { left: 23px; bottom: 35px; max-width: calc(100% - 46px); }.hero h1 { font-size: 76px; }.city-phrase { font-size: 19px; }.hero-poem { font-size: 14px; }.map-dock { height: 390px; }.random-button { min-height: 60px; font-size: 23px; }.weather-panel, .profile-area { padding-right: 18px; padding-left: 18px; }.weather-grid { grid-template-columns: repeat(2, 1fr); row-gap: 8px; }.profile-heading { display: block; }.profile-heading > p { margin-top: 6px; }.map-station-list { max-height: 250px; overflow: auto; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
+
+/* Soften the seams between the shared hero image, map layer, and observatory. */
+.site-header { background: linear-gradient(90deg, rgb(246 246 239 / 54%) 0%, rgb(246 246 239 / 40%) 30%, rgb(246 246 239 / 12%) 66%, transparent 100%); }
+.site-header::after { bottom: -48px; height: 52px; background: linear-gradient(to bottom, rgb(240 243 237 / 14%), transparent); backdrop-filter: blur(18px); }
+.map-dock::before { right: -132px; width: 170px; background: linear-gradient(90deg, rgb(202 222 220 / 22%), rgb(202 222 220 / 9%) 46%, transparent); backdrop-filter: blur(20px) saturate(.82); mask-image: linear-gradient(90deg, #000 0%, rgb(0 0 0 / .58) 38%, transparent 100%); }
+.map-dock::after { bottom: -48px; height: 86px; background: linear-gradient(to bottom, rgb(238 242 236 / 12%), transparent); backdrop-filter: blur(20px); }
+.observatory { border-color: rgb(255 255 255 / 30%); box-shadow: 0 10px 28px rgb(27 40 48 / 10%); }
+@media (max-width: 900px) { .site-header { background: linear-gradient(90deg, rgb(246 246 239 / 54%), transparent); }.site-header::after { display: none; } }
