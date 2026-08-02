@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import date
 import json
 import sqlite3
 from typing import Any
 
-from datetime import date
+from .travel_advice_validation import validate_travel_advice
 
 
 def row_data(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -46,10 +47,9 @@ def get_weather(connection: sqlite3.Connection, city_id: int) -> dict[str, Any] 
         return None
     weather = row_data(connection.execute("SELECT * FROM weather_observations WHERE city_id = ? ORDER BY observed_at DESC LIMIT 1", (city_id,)).fetchone())
     if not weather:
-        return {"city": city, "date": date.today().isoformat(), "observed_at": None, "weather": None, "air_quality": None, "atmosphere": None, "poem": None}
+        return {"city": city, "date": date.today().isoformat(), "observed_at": None, "weather": None, "air_quality": None, "atmosphere": None}
     air_quality = row_data(connection.execute("SELECT aqi, pm25_ug_m3, pm10_ug_m3, primary_pollutant FROM air_quality_observations WHERE weather_observation_id = ?", (weather["id"],)).fetchone())
     atmosphere = row_data(connection.execute("SELECT stability_level, lapse_rate_c_per_km, pressure_hpa, explanation, calculation_version FROM atmosphere_analyses WHERE weather_observation_id = ?", (weather["id"],)).fetchone())
-    poem = row_data(connection.execute("SELECT content, model_name, generated_at FROM poems WHERE weather_observation_id = ?", (weather["id"],)).fetchone())
     return {
         "city": {key: city[key] for key in ("id", "name", "longitude", "latitude")},
         "date": weather["observation_date"],
@@ -57,7 +57,6 @@ def get_weather(connection: sqlite3.Connection, city_id: int) -> dict[str, Any] 
         "weather": {"temperature_c": weather["temperature_c"], "feels_like_c": weather["feels_like_c"], "text": weather["weather_text"], "code": weather["weather_code"], "humidity_percent": weather["humidity_percent"], "wind_speed_ms": weather["wind_speed_ms"], "wind_direction": weather["wind_direction"], "precipitation_probability_percent": weather["precipitation_probability_percent"], "visibility_km": weather["visibility_km"]},
         "air_quality": air_quality,
         "atmosphere": atmosphere,
-        "poem": poem,
     }
 
 
@@ -76,3 +75,19 @@ def get_weather_profile(connection: sqlite3.Connection, route_id: int) -> dict[s
     )
     points = [dict(row) for row in rows]
     return {"route_id": route_id, "date": date.today().isoformat(), "distance_unit": "km", "points": points, "missing_city_ids": [point["city_id"] for point in points if point["temperature_c"] is None]}
+
+
+def get_latest_travel_advice(connection: sqlite3.Connection, route_id: int) -> dict[str, Any] | None:
+    reports = connection.execute(
+        """SELECT route_id, travel_date, content, model_name, generated_at
+           FROM travel_reports WHERE route_id = ?
+           ORDER BY travel_date DESC, generated_at DESC""",
+        (route_id,),
+    )
+    for row in reports:
+        report = dict(row)
+        if validate_travel_advice(report["content"]) is not None:
+            continue
+        report["is_stale"] = report["travel_date"] != date.today().isoformat()
+        return report
+    return None

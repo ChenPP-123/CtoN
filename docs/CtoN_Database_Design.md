@@ -53,10 +53,8 @@ erDiagram
     cities ||--o{ weather_observations : has
     cities ||--o{ air_quality_observations : has
     cities ||--o{ atmosphere_analyses : has
-    cities ||--o{ poems : inspires
     weather_observations ||--o| air_quality_observations : reports
     weather_observations ||--o| atmosphere_analyses : analyzed_as
-    weather_observations ||--o{ poems : generates
     routes ||--o{ travel_reports : used_by
 
     routes {
@@ -125,24 +123,15 @@ erDiagram
         TEXT explanation
         TEXT calculation_version
     }
-    poems {
-        INTEGER id PK
-        INTEGER city_id FK
-        INTEGER weather_observation_id FK
-        TEXT poem_date
-        TEXT content
-        TEXT model_name
-        TEXT prompt_hash
-        TEXT generated_at
-    }
     travel_reports {
         INTEGER id PK
         INTEGER route_id FK
         TEXT travel_date
-        TEXT title
-        TEXT summary
-        TEXT report_json
+        TEXT content
+        TEXT model_name
+        TEXT prompt_hash
         TEXT generated_at
+        TEXT source_snapshot_json
     }
 ```
 
@@ -150,8 +139,7 @@ erDiagram
 
 1. `routes` 与 `cities` 是多对多关系，由 `route_stations` 保存线路顺序和距起点距离；这样同一城市可以出现在多条线路中。
 2. `weather_observations` 是城市天气快照主表，`air_quality_observations` 和 `atmosphere_analyses` 为其一对一扩展记录。
-3. `poems` 关联具体天气快照，避免诗歌与后来更新的天气数据失去对应关系。
-4. `travel_reports` 保存已生成的旅行报告快照，不在用户每次访问时重新调用 AI。
+3. `travel_reports` 保存已生成的全线路建议，AI 失败时保留最近一次成功结果。
 
 ## 4. 表结构
 
@@ -251,34 +239,20 @@ erDiagram
 | `calculation_version` | `TEXT` | NOT NULL | 计算规则版本 |
 | `created_at` | `TEXT` | NOT NULL | 计算时间 |
 
-### 4.7 `poems`：天气诗歌
-
-| 字段 | 类型 | 约束 | 说明 |
-|---|---|---|---|
-| `id` | `INTEGER` | PK | 诗歌 ID |
-| `city_id` | `INTEGER` | NOT NULL, FK `cities.id` RESTRICT | 城市 |
-| `weather_observation_id` | `INTEGER` | NOT NULL, FK `weather_observations.id` RESTRICT | 生成时使用的天气 |
-| `content` | `TEXT` | NOT NULL | 两句或四句五言、七言绝句正文 |
-| `model_name` | `TEXT` | NOT NULL | AI 模型名称，如 `deepseek-chat` |
-| `prompt_hash` | `TEXT` | NULL | Prompt 哈希，用于去重和审计 |
-| `generated_at` | `TEXT` | NOT NULL | 生成时间 |
-
-唯一约束：`weather_observation_id`。同一条当前天气快照只保留一首诗歌；重新生成时覆盖该快照的诗歌内容。
-
-### 4.8 `travel_reports`：旅行气象报告
+### 4.7 `travel_reports`：全线路旅途建议
 
 | 字段 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `id` | `INTEGER` | PK | 报告 ID |
 | `route_id` | `INTEGER` | NOT NULL, FK `routes.id` RESTRICT | 使用的线路 |
 | `travel_date` | `TEXT` | NOT NULL | 出行日期 |
-| `title` | `TEXT` | NOT NULL | 报告标题 |
-| `summary` | `TEXT` | NOT NULL | 页面摘要 |
-| `report_json` | `TEXT` | NOT NULL | 各城市天气、穿衣/雨具/防暑建议等 JSON |
+| `content` | `TEXT` | NOT NULL | 50–100 个汉字的单段建议 |
+| `model_name` | `TEXT` | NOT NULL | AI 模型名称 |
+| `prompt_hash` | `TEXT` | NOT NULL | Prompt 哈希，用于审计 |
 | `generated_at` | `TEXT` | NOT NULL | 生成时间 |
-| `source_snapshot_json` | `TEXT` | NULL | 生成时使用的天气记录 ID 列表 |
+| `source_snapshot_json` | `TEXT` | NOT NULL | 生成时使用的天气记录 ID 列表 |
 
-唯一约束：`(route_id, travel_date)`，同一线路同一天复用已生成报告。
+唯一约束：`(route_id, travel_date)`，同一线路同一天只保留最近一次成功生成的建议。
 
 ## 5. 约束与数据一致性
 
@@ -286,23 +260,20 @@ erDiagram
 - `air_quality_observations.city_id` 和对应天气记录的 `city_id` 必须相同；SQLAlchemy 写入时由服务层校验。
 - `atmosphere_analyses` 的输入是天气快照，计算规则变化时更新 `calculation_version` 并重新计算。
 - 外部 API 失败时不覆盖已有有效快照；任务失败应由调度器记录日志并重试。
-- `raw_payload_json`、`report_json`、`geometry_json` 写入前必须通过 JSON 序列化，读取后必须校验结构。
+- `source_snapshot_json`、`geometry_json` 写入前必须通过 JSON 序列化，读取后必须校验结构。
 - 当前设计只保存每日快照。如果将来需要小时级曲线，应新增小时观测表，不改变每日查询接口的数据含义。
 
 ### 5.1 数据保留策略
 
-- `weather_observations`、`air_quality_observations`、`atmosphere_analyses`、`poems` 和 `travel_reports` 只保留最近 15 个自然日的数据，包含当天，即 `今天` 以及之前 14 天。
+- `weather_observations`、`air_quality_observations`、`atmosphere_analyses` 和 `travel_reports` 只保留最近 15 个自然日的数据，包含当天，即 `今天` 以及之前 14 天。
 - `routes`、`cities`、`route_stations` 属于线路和城市静态配置，不受此清理策略影响。
 - 每日数据更新成功后执行一次清理任务；清理任务失败不能影响当天数据写入，应记录错误并在下一次调度时重试。
 - 清理以 UTC 日期为准，与文档中日期字段的时间约定保持一致。
 
-清理动态数据时先删除依赖天气快照的诗歌，再删除天气快照；空气质量和大气分析会因外键 `ON DELETE CASCADE` 自动删除。旅行报告按自身出行日期单独清理：
+空气质量和大气分析随天气快照删除；路线建议按自身日期单独清理：
 
 ```sql
 BEGIN;
-
-DELETE FROM poems
-WHERE poem_date < date('now', '-14 days');
 
 DELETE FROM travel_reports
 WHERE travel_date < date('now', '-14 days');
@@ -337,9 +308,6 @@ CREATE INDEX idx_air_quality_city
 
 CREATE INDEX idx_atmosphere_city
     ON atmosphere_analyses(city_id);
-
-CREATE INDEX idx_poems_city_date
-    ON poems(city_id, poem_date DESC);
 
 CREATE INDEX idx_travel_reports_route_date
     ON travel_reports(route_id, travel_date DESC);
@@ -411,7 +379,7 @@ CREATE TABLE weather_observations (
 );
 ```
 
-其余五张表按第 4 节字段定义创建，并分别建立第 6 节索引。创建所有表后再执行 `PRAGMA foreign_keys = ON` 的连接初始化代码。
+其余四张表按第 4 节字段定义创建，并分别建立第 6 节索引。创建所有表后再执行 `PRAGMA foreign_keys = ON` 的连接初始化代码。
 
 ## 8. 示例数据
 
@@ -470,20 +438,12 @@ VALUES
     (1002, 2, '不稳定', 9.5, 1002.0, '地面升温明显，有利于近地层空气交换。', 'v1', '2026-07-30T08:10:00Z'),
     (1003, 3, '中性', 6.1, 1008.0, '云雨天气削弱地面加热，垂直混合处于中等水平。', 'v1', '2026-07-30T08:10:00Z');
 
-INSERT INTO poems
-    (city_id, weather_observation_id, poem_date, content, model_name, prompt_hash, generated_at)
-VALUES
-    (1, 1001, '2026-07-30', '巴山云作幕，江风入夏城。', 'deepseek-chat', 'sha256:example-cq', '2026-07-30T08:20:00Z'),
-    (2, 1002, '2026-07-30', '晴光开汉水，南风过江城。', 'deepseek-chat', 'sha256:example-wh', '2026-07-30T08:20:00Z'),
-    (3, 1003, '2026-07-30', '梧桐听细雨，钟山入暮云。', 'deepseek-chat', 'sha256:example-nj', '2026-07-30T08:20:00Z');
-
 INSERT INTO travel_reports
-    (route_id, travel_date, title, summary, report_json, generated_at, source_snapshot_json)
+    (route_id, travel_date, content, model_name, prompt_hash, generated_at, source_snapshot_json)
 VALUES
-    (1, '2026-07-30', '重庆至南京九小时气象旅行报告',
-     '沿线由湿热多云转为晴热，再进入湿润降雨天气。',
-     '{"cities":[{"city_id":1,"clothing":"轻薄透气衣物","umbrella":true},{"city_id":2,"clothing":"短袖并注意防晒","umbrella":false},{"city_id":3,"clothing":"短袖，建议携带雨具","umbrella":true}]}',
-     '2026-07-30T08:25:00Z', '[1001,1002,1003]');
+    (1, '2026-07-30',
+     '沿线湿热多变，建议穿轻薄衣物并携带雨具，武汉至南京注意防晒补水。',
+     'deepseek-v4-flash', 'sha256:example-route', '2026-07-30T08:25:00Z', '[1001,1002,1003]');
 ```
 
 ## 9. 常用查询
@@ -515,11 +475,10 @@ ORDER BY rs.station_order;
 1. 查询启用线路及其城市节点。
 2. 对每个城市调用天气 API，在一个事务中 UPSERT `weather_observations`。
 3. 使用同一 `weather_observation_id` UPSERT 空气质量和大气分析。
-4. 仅当当前天气快照变化且不存在诗歌时调用 DeepSeek，成功后插入 `poems`。
-5. 根据本次快照生成并 UPSERT `travel_reports`。
-6. 提交当天数据后执行 15 个自然日之外的动态数据清理。
+4. 天气数据提交后，按用户请求调用一次 DeepSeek 生成路线建议；成功后 UPSERT `travel_reports`。
+5. 提交当天数据后执行 15 个自然日之外的动态数据清理。
 
-每个城市的天气相关写入使用独立事务，避免单个 API 失败回滚全部城市；诗歌和报告生成属于外部调用，调用成功后才写入数据库。外部调用不应持有数据库事务。
+每个城市的天气相关写入使用独立事务，避免单个 API 失败回滚全部城市；路线建议生成成功后才写入数据库，失败时保留旧建议。
 
 ## 11. 备份与维护
 

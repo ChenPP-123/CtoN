@@ -21,7 +21,24 @@ function render() {
   chart.setOption({
     animationDuration: 350,
     grid: { left: 42, right: 20, top: 8, bottom: 34 },
-    xAxis: { type: 'category', data: props.points.map((point) => `${point.city_name}\n${point.distance_from_origin_km} km`), axisLine: { lineStyle: { color: '#355467' } }, axisLabel: { color: '#aac1cb', lineHeight: 18 } },
+    xAxis: {
+      type: 'category',
+      data: props.points.map((point) => point.city_name),
+      axisLine: { lineStyle: { color: '#355467' } },
+      axisLabel: {
+        lineHeight: 17,
+        formatter: (_value, index) => {
+          const point = props.points[index]
+          const cityStyle = point.city_id === props.selectedCityId ? 'activeCity' : 'city'
+          return `{${cityStyle}|${point.city_name}}\n{distance|${point.distance_from_origin_km} km}`
+        },
+        rich: {
+          city: { color: '#3f5962', fontWeight: 600 },
+          activeCity: { color, fontWeight: 700 },
+          distance: { color: '#71878d', fontSize: 10 },
+        },
+      },
+    },
     yAxis: { type: 'value', axisLine: { show: false }, splitLine: { lineStyle: { color: 'rgba(53, 84, 103, .16)' } }, axisLabel: { color: '#789099', formatter: `{value}${current.unit}` } },
     tooltip: { trigger: 'axis', valueFormatter: (value) => value === null ? '暂无数据' : `${value}${current.unit}` },
     series: [{ type: 'line', data, connectNulls: false, smooth: .25, symbolSize: (value, params) => params.data.selected ? 14 : 9, lineStyle: { color, width: 3 }, itemStyle: { color, borderColor: '#fff', borderWidth: 3 }, areaStyle: { color, opacity: .11 } }],

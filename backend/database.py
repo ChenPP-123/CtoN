@@ -111,22 +111,24 @@ def initialize_database() -> None:
                 calculation_version TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS poems (
+            CREATE TABLE IF NOT EXISTS travel_reports (
                 id INTEGER PRIMARY KEY,
-                city_id INTEGER NOT NULL REFERENCES cities(id) ON DELETE RESTRICT,
-                weather_observation_id INTEGER NOT NULL UNIQUE REFERENCES weather_observations(id) ON DELETE CASCADE,
+                route_id INTEGER NOT NULL REFERENCES routes(id) ON DELETE RESTRICT,
+                travel_date TEXT NOT NULL,
                 content TEXT NOT NULL,
                 model_name TEXT NOT NULL,
                 prompt_hash TEXT NOT NULL,
-                generated_at TEXT NOT NULL
+                generated_at TEXT NOT NULL,
+                source_snapshot_json TEXT NOT NULL,
+                UNIQUE(route_id, travel_date)
             );
 
             CREATE INDEX IF NOT EXISTS idx_route_stations_route_order
                 ON route_stations(route_id, station_order);
             CREATE INDEX IF NOT EXISTS idx_weather_city_date
                 ON weather_observations(city_id, observation_date DESC);
-            CREATE INDEX IF NOT EXISTS idx_poems_city_generated
-                ON poems(city_id, generated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_travel_reports_route_date
+                ON travel_reports(route_id, travel_date DESC);
             """
         )
         _add_route_station_coordinate_columns(connection)

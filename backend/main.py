@@ -11,14 +11,16 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .config import get_amap_settings
 from .database import connect, initialize_database, open_database
+from .external.amap_api import AMapError, forward_sdk_request
+from .external.deepseek_api import DeepSeekError
+from .external.qweather_api import QWeatherError
 from .schemas import ApiResponse
 from .seed import seed_database
-from .services import get_city, get_route, get_weather, get_weather_profile, list_routes
+from .services import get_city, get_latest_travel_advice, get_route, get_weather, get_weather_profile, list_routes
+from .travel_advice_service import RouteWeatherUnavailableError, generate_travel_advice
 from .weather_service import refresh_active_route_weather
-from .external.qweather_api import QWeatherError
-from .config import get_amap_settings
-from .external.amap_api import AMapError, forward_sdk_request
 
 
 @asynccontextmanager
@@ -116,6 +118,29 @@ def weather_profile(route_id: int, request: Request):
     if not profile:
         raise HTTPException(status_code=404)
     return response(profile, request)
+
+
+@app.get("/api/v1/routes/{route_id}/travel-advice")
+def travel_advice(route_id: int, request: Request):
+    with connect() as connection:
+        if not get_route(connection, route_id):
+            raise HTTPException(status_code=404)
+        advice = get_latest_travel_advice(connection, route_id)
+    return response(advice, request)
+
+
+@app.post("/api/v1/routes/{route_id}/travel-advice")
+def create_travel_advice(route_id: int, request: Request):
+    try:
+        with open_database() as connection:
+            advice = generate_travel_advice(connection, route_id)
+    except LookupError as error:
+        raise HTTPException(status_code=404) from error
+    except RouteWeatherUnavailableError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except DeepSeekError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return response(advice, request)
 
 
 @app.post("/api/v1/weather/refresh")

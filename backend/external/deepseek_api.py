@@ -1,4 +1,4 @@
-"""Small adapter for generating a short poem with DeepSeek."""
+"""Small adapter for generating route guidance with DeepSeek."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from ..config import DeepSeekSettings
 
 
 class DeepSeekError(RuntimeError):
-    """DeepSeek did not return a usable poem."""
+    """DeepSeek did not return usable text."""
 
 
 class DeepSeekClient:
@@ -21,15 +21,15 @@ class DeepSeekClient:
         self.model = settings.model
         self.headers = {"Authorization": f"Bearer {settings.api_key}", "Content-Type": "application/json"}
 
-    def generate_poem(self, prompt: str) -> str:
+    def generate_text(self, prompt: str) -> str:
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": "你是一位克制的中文旅行诗人。"},
+                {"role": "system", "content": "你是一位严谨、简洁的中国高铁旅行气象顾问。"},
                 {"role": "user", "content": prompt},
             ],
-            "temperature": 0.9,
-            "max_tokens": 180,
+            "temperature": 0.5,
+            "max_tokens": 400,
         }
         try:
             response = httpx.post(f"{self.base_url}/chat/completions", headers=self.headers, json=payload, timeout=30.0)
@@ -42,7 +42,7 @@ class DeepSeekClient:
             raise DeepSeekError("DeepSeek 返回了非 JSON 响应") from error
         content = _message_content(body)
         if not content:
-            raise DeepSeekError("DeepSeek 响应未包含诗歌内容")
+            raise DeepSeekError("DeepSeek 响应未包含路线建议")
         return content
 
 
