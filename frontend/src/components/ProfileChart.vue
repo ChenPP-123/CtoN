@@ -36,13 +36,13 @@ function render() {
         rich: {
           city: { color: '#3f5962', fontSize: 9, fontWeight: 600 },
           activeCity: { color, fontSize: 9, fontWeight: 700 },
-          distance: { color: '#71878d', fontSize: 7 },
+          distance: { color: '#566f76', fontSize: 6 },
         },
       },
     },
-    yAxis: { type: 'value', axisLine: { show: false }, splitLine: { lineStyle: { color: 'rgba(53, 84, 103, .16)' } }, axisLabel: { color: '#4f6870', formatter: `{value}${current.unit}` } },
+    yAxis: { type: 'value', axisLine: { show: false }, splitLine: { lineStyle: { color: 'rgba(53, 84, 103, .20)' } }, axisLabel: { color: '#405a62', formatter: `{value}${current.unit}` } },
     tooltip: { trigger: 'axis', valueFormatter: (value) => value === null ? '暂无数据' : `${value}${current.unit}` },
-    series: [{ type: 'line', data, connectNulls: false, smooth: .25, symbolSize: (value, params) => params.data.selected ? 14 : 9, lineStyle: { color, width: 3 }, itemStyle: { color, borderColor: '#fff', borderWidth: 3 }, areaStyle: { color, opacity: .20 } }],
+    series: [{ type: 'line', data, connectNulls: false, smooth: .25, symbolSize: (value, params) => params.data.selected ? 14 : 9, lineStyle: { color, width: 3 }, itemStyle: { color, borderColor: '#fff', borderWidth: 3 }, areaStyle: { color, opacity: .26 } }],
   }, true)
 }
 

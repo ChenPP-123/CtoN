@@ -22,6 +22,8 @@ from .services import get_city, get_latest_travel_advice, get_route, get_weather
 from .travel_advice_service import RouteWeatherUnavailableError, generate_travel_advice
 from .weather_service import refresh_active_route_weather
 
+APP_VERSION = "1.0.0"
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -31,7 +33,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="CtoN API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="CtoN API", version=APP_VERSION, lifespan=lifespan)
 allowed_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
 app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_methods=["GET", "POST"], allow_headers=["*"])
 
@@ -64,7 +66,7 @@ async def handle_http_exception(request: Request, exception: HTTPException) -> J
 def health(request: Request):
     with connect() as connection:
         connection.execute("SELECT 1")
-    return response({"status": "ok", "database": "ok", "version": "0.1.0"}, request)
+    return response({"status": "ok", "database": "ok", "version": APP_VERSION}, request)
 
 
 @app.get("/_AMapService/{path:path}", include_in_schema=False)
