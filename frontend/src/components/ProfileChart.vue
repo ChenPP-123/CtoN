@@ -20,9 +20,9 @@ function render() {
   const data = props.points.map((point) => ({ value: point[current.field], selected: point.city_id === props.selectedCityId, name: point.city_name, distance: point.distance_from_origin_km }))
   chart.setOption({
     animationDuration: 350,
-    grid: { left: 45, right: 24, top: 28, bottom: 40 },
+    grid: { left: 42, right: 20, top: 8, bottom: 34 },
     xAxis: { type: 'category', data: props.points.map((point) => `${point.city_name}\n${point.distance_from_origin_km} km`), axisLine: { lineStyle: { color: '#355467' } }, axisLabel: { color: '#aac1cb', lineHeight: 18 } },
-    yAxis: { type: 'value', axisLine: { show: false }, splitLine: { lineStyle: { color: '#183446' } }, axisLabel: { color: '#aac1cb', formatter: `{value}${current.unit}` } },
+    yAxis: { type: 'value', axisLine: { show: false }, splitLine: { lineStyle: { color: 'rgba(53, 84, 103, .16)' } }, axisLabel: { color: '#789099', formatter: `{value}${current.unit}` } },
     tooltip: { trigger: 'axis', valueFormatter: (value) => value === null ? '暂无数据' : `${value}${current.unit}` },
     series: [{ type: 'line', data, connectNulls: false, smooth: .25, symbolSize: (value, params) => params.data.selected ? 14 : 9, lineStyle: { color, width: 3 }, itemStyle: { color, borderColor: '#fff', borderWidth: 3 }, areaStyle: { color, opacity: .11 } }],
   }, true)

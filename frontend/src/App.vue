@@ -118,7 +118,6 @@ onMounted(load)
         </section>
         <p v-if="error" class="inline-error">{{ error }} <button @click="selectCity(selectedCityId)">重试</button></p>
       </section>
-      <nav class="station-nav" aria-label="城市切换"><button v-for="station in route.stations" :key="station.city_id" :class="{ active: station.city_id === selectedCityId }" :aria-current="station.city_id === selectedCityId ? 'true' : undefined" @click="selectCity(station.city_id)"><span>{{ String(station.station_order).padStart(2, '0') }}</span><strong>{{ station.city_name }}</strong><small>{{ station.station_name }}</small></button></nav>
     </template>
     <div v-else class="loading-state">正在读取沿线观测…</div>
   </main>
