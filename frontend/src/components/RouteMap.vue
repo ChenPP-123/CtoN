@@ -16,6 +16,8 @@ const mapElement = ref(null)
 const unavailableReason = ref('')
 const hasUsableCoordinates = computed(() => props.stations.length > 0 && props.stations.every((station) => Number.isFinite(station.longitude) && Number.isFinite(station.latitude)))
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+const ROUTE_CENTER = [112.6741, 30.7831]
+const ROUTE_ZOOM = 6.2
 let map
 let AMap
 let routeCasing
@@ -179,7 +181,7 @@ async function initializeMap() {
   try {
     AMap = await loadAMap()
     await nextTick()
-    map = new AMap.Map(mapElement.value, { viewMode: '2D', zoom: 6, center: positionOf(props.stations[0]), mapStyle: 'amap://styles/normal' })
+    map = new AMap.Map(mapElement.value, { viewMode: '2D', zoom: ROUTE_ZOOM, center: ROUTE_CENTER, mapStyle: 'amap://styles/normal' })
     const coordinates = routeCoordinates()
     routeCasing = new AMap.Polyline({ path: coordinates, strokeColor: '#f7faf6', strokeWeight: 8, strokeOpacity: .94, lineJoin: 'round', lineCap: 'round', zIndex: 9 })
     routeLine = new AMap.Polyline({ path: coordinates, strokeColor: '#244a57', strokeWeight: 3, strokeOpacity: .92, lineJoin: 'round', lineCap: 'round', zIndex: 10 })
@@ -195,7 +197,11 @@ async function initializeMap() {
     trainElement = createTrainElement()
     trainMarker = new AMap.Marker({ position: positionOf(stationByCityId(props.selectedCityId) || props.stations[0]), content: trainElement, offset: new AMap.Pixel(-19, -19), zIndex: 30 })
     map.add(trainMarker)
-    map.setFitView([...stationMarkers.values()].map(({ marker }) => marker).concat(routeCasing, routeLine), false, [50, 92, 50, 92])
+    if (mapElement.value.clientWidth < 700) {
+      map.setFitView([...stationMarkers.values()].map(({ marker }) => marker).concat(routeCasing, routeLine), false, [50, 56, 50, 56])
+    } else {
+      map.setZoomAndCenter(ROUTE_ZOOM, ROUTE_CENTER)
+    }
     updateSelectedMarker()
     moveTrainToDestination(props.trainDestinationCityId)
   } catch (error) {

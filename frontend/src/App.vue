@@ -193,7 +193,10 @@ onBeforeUnmount(() => {
         </section>
         <header class="site-header">
           <a class="brand" href="#top">Cto<span>N</span></a>
-          <p>重庆北 → 南京南 · 沿线气象观测</p>
+          <div class="route-identity">
+            <p class="route-title">重庆北 → 南京南</p>
+            <p class="route-meta">8 STATIONS · 1245 KM · 沿线气象观测</p>
+          </div>
           <button class="refresh-button" :disabled="refreshing" @click="refresh">{{ refreshLabel }}</button>
         </header>
         <aside class="map-dock">
