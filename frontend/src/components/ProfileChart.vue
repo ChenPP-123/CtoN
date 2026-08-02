@@ -20,22 +20,23 @@ function render() {
   const data = props.points.map((point) => ({ value: point[current.field], selected: point.city_id === props.selectedCityId, name: point.city_name, distance: point.distance_from_origin_km }))
   chart.setOption({
     animationDuration: 350,
-    grid: { left: 42, right: 20, top: 8, bottom: 34 },
+    grid: { left: 42, right: 20, top: 8, bottom: 54 },
     xAxis: {
       type: 'category',
       data: props.points.map((point) => point.city_name),
       axisLine: { lineStyle: { color: '#355467' } },
       axisLabel: {
-        lineHeight: 17,
+        interval: 0,
+        lineHeight: 13,
         formatter: (_value, index) => {
           const point = props.points[index]
           const cityStyle = point.city_id === props.selectedCityId ? 'activeCity' : 'city'
           return `{${cityStyle}|${point.city_name}}\n{distance|${point.distance_from_origin_km} km}`
         },
         rich: {
-          city: { color: '#3f5962', fontWeight: 600 },
-          activeCity: { color, fontWeight: 700 },
-          distance: { color: '#71878d', fontSize: 10 },
+          city: { color: '#3f5962', fontSize: 9, fontWeight: 600 },
+          activeCity: { color, fontSize: 9, fontWeight: 700 },
+          distance: { color: '#71878d', fontSize: 7 },
         },
       },
     },
