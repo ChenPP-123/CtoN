@@ -203,22 +203,20 @@ onBeforeUnmount(() => {
         <section class="observatory" aria-label="当前城市气象观测台">
           <WeatherPanel :weather-data="weather" :city="weather?.city" />
           <div class="profile-area">
+            <aside class="travel-advice" aria-live="polite">
+              <div>
+                <span>今日行路建议</span>
+                <small v-if="adviceRefreshing">正在更新</small>
+                <small v-else-if="travelAdvice">{{ travelAdvice.is_stale ? `上次建议 · ${travelAdvice.travel_date}` : travelAdvice.travel_date }}</small>
+              </div>
+              <p v-if="travelAdvice">{{ travelAdvice.content }}</p>
+              <p v-else-if="adviceRefreshing">正在结合沿线观测生成建议…</p>
+              <p v-else>更新观测后生成今日路线建议。</p>
+              <small v-if="adviceError" class="advice-error">本次建议更新失败：{{ adviceError }}</small>
+            </aside>
             <div class="profile-heading"><div><p class="eyebrow">ROUTE OBSERVATORY</p><h2>沿线观测剖面</h2></div><p>从重庆北站起算的真实距离</p></div>
             <div class="metric-tabs" role="tablist" aria-label="观测指标"><button v-for="[key, label] in metrics" :key="key" :class="{ active: activeMetric === key }" role="tab" :aria-selected="activeMetric === key" @click="activeMetric = key">{{ label }}</button></div>
-            <div class="profile-content">
-              <aside class="travel-advice" aria-live="polite">
-                <div>
-                  <span>今日行路建议</span>
-                  <small v-if="adviceRefreshing">正在更新</small>
-                  <small v-else-if="travelAdvice">{{ travelAdvice.is_stale ? `上次建议 · ${travelAdvice.travel_date}` : travelAdvice.travel_date }}</small>
-                </div>
-                <p v-if="travelAdvice">{{ travelAdvice.content }}</p>
-                <p v-else-if="adviceRefreshing">正在结合沿线观测生成建议…</p>
-                <p v-else>更新观测后生成今日路线建议。</p>
-                <small v-if="adviceError" class="advice-error">本次建议更新失败：{{ adviceError }}</small>
-              </aside>
-              <ProfileChart :points="profile.points" :selected-city-id="selectedCityId" :metric="activeMetric" :theme-color="visual.primary" />
-            </div>
+            <ProfileChart :points="profile.points" :selected-city-id="selectedCityId" :metric="activeMetric" :theme-color="visual.primary" />
           </div>
         </section>
         <p v-if="error" class="inline-error">{{ error }} <button @click="selectCity(selectedCityId)">重试</button></p>

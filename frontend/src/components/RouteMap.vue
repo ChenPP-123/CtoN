@@ -195,7 +195,7 @@ async function initializeMap() {
     trainElement = createTrainElement()
     trainMarker = new AMap.Marker({ position: positionOf(stationByCityId(props.selectedCityId) || props.stations[0]), content: trainElement, offset: new AMap.Pixel(-19, -19), zIndex: 30 })
     map.add(trainMarker)
-    map.setFitView([...stationMarkers.values()].map(({ marker }) => marker).concat(routeCasing, routeLine), false, [72, 74, 96, 74])
+    map.setFitView([...stationMarkers.values()].map(({ marker }) => marker).concat(routeCasing, routeLine), false, [62, 92, 62, 92])
     updateSelectedMarker()
     moveTrainToDestination(props.trainDestinationCityId)
   } catch (error) {
