@@ -198,7 +198,7 @@ onBeforeUnmount(() => {
         </header>
         <aside class="map-dock">
           <RouteMap :stations="route.stations" :geometry="route.geometry" :selected-city-id="selectedCityId" :train-destination-city-id="trainDestinationCityId" :train-duration-ms="TRAIN_MOVE_MS" :autoplay-enabled="autoplayEnabled" @select="selectCity" @toggle-autoplay="toggleAutoplay" />
-          <button class="random-button" :disabled="traveling" @click="randomTravel"><span class="travel-mark" aria-hidden="true">⌁</span>{{ traveling ? `前往 ${selectedCity?.city_name}…` : '随机旅行' }} <b aria-hidden="true">›</b></button>
+          <button class="random-button" :disabled="traveling" @click="randomTravel"><span class="travel-mark" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M4 17.5 10.5 14l3.1 1.7L20 6.5" /><path d="M15.5 6.5H20v4.5" /></svg></span><span class="travel-label">{{ traveling ? `前往 ${selectedCity?.city_name}…` : '随机旅行' }}</span><span class="travel-arrow" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M5 12h13M13 6l6 6-6 6" /></svg></span></button>
         </aside>
         <section class="observatory" aria-label="当前城市气象观测台">
           <WeatherPanel :weather-data="weather" :city="weather?.city" />
