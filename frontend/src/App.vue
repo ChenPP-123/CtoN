@@ -86,11 +86,16 @@ async function selectCity(cityId, { restartPlayback = true } = {}) {
 }
 
 async function randomTravel() {
-  const choices = route.value.stations.filter((station) => station.city_id !== selectedCityId.value)
-  const destination = choices[Math.floor(Math.random() * choices.length)]
   traveling.value = true
-  await selectCity(destination.city_id)
-  traveling.value = false
+  error.value = ''
+  try {
+    const trip = await api.getRandomTrip(1)
+    await selectCity(trip.station.city_id)
+  } catch (exception) {
+    error.value = exception.message
+  } finally {
+    traveling.value = false
+  }
 }
 
 async function load() {

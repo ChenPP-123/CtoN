@@ -16,6 +16,7 @@ export const api = {
   getRoute: (routeId) => get(`/routes/${routeId}`),
   getWeather: (cityId) => get(`/cities/${cityId}/weather`),
   getProfile: (routeId) => get(`/routes/${routeId}/weather-profile`),
+  getRandomTrip: (routeId) => get(`/routes/${routeId}/random-trip`),
   getTravelAdvice: (routeId) => get(`/routes/${routeId}/travel-advice`),
   refreshWeather: () => post('/weather/refresh'),
   generateTravelAdvice: (routeId) => post(`/routes/${routeId}/travel-advice`),

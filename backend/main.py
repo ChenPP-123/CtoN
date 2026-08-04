@@ -6,8 +6,9 @@ import uuid
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import date, datetime, timedelta, timezone
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -18,11 +19,21 @@ from .external.deepseek_api import DeepSeekError
 from .external.qweather_api import QWeatherError
 from .schemas import ApiResponse
 from .seed import seed_database
-from .services import get_city, get_latest_travel_advice, get_route, get_weather, get_weather_profile, list_routes
+from .services import (
+    PROFILE_METRICS,
+    get_city,
+    get_latest_travel_advice,
+    get_random_trip,
+    get_route,
+    get_weather,
+    get_weather_profile,
+    list_routes,
+)
 from .travel_advice_service import RouteWeatherUnavailableError, generate_travel_advice
 from .weather_service import refresh_active_route_weather
 
 APP_VERSION = "1.0.0"
+WEATHER_HISTORY_DAYS = 15
 
 
 @asynccontextmanager
@@ -52,6 +63,29 @@ def request_id(request: Request) -> str:
 
 def response(data, request: Request) -> ApiResponse:
     return ApiResponse(data=data, request_id=request_id(request))
+
+
+def resolve_weather_date(requested_date: date | None) -> str:
+    current_date = datetime.now(timezone.utc).date()
+    observation_date = requested_date or current_date
+    earliest_date = current_date - timedelta(days=WEATHER_HISTORY_DAYS - 1)
+    if not earliest_date <= observation_date <= current_date:
+        raise HTTPException(status_code=422, detail="日期只支持最近 15 个自然日")
+    return observation_date.isoformat()
+
+
+def parse_profile_metrics(metrics: str | None) -> tuple[str, ...]:
+    if metrics is None:
+        return tuple(PROFILE_METRICS)
+    requested_metrics = tuple(dict.fromkeys(metric.strip() for metric in metrics.split(",")))
+    invalid_metrics = [metric for metric in requested_metrics if metric not in PROFILE_METRICS]
+    if invalid_metrics:
+        allowed_metrics = ", ".join(PROFILE_METRICS)
+        raise HTTPException(
+            status_code=422,
+            detail=f"metrics 只支持：{allowed_metrics}",
+        )
+    return requested_metrics
 
 
 @app.exception_handler(HTTPException)
@@ -105,21 +139,47 @@ def city_detail(city_id: int, request: Request):
 
 
 @app.get("/api/v1/cities/{city_id}/weather")
-def city_weather(city_id: int, request: Request):
+def city_weather(
+    city_id: int,
+    request: Request,
+    observation_date: date | None = Query(default=None, alias="date"),
+):
+    selected_date = resolve_weather_date(observation_date) if observation_date else None
     with connect() as connection:
-        weather = get_weather(connection, city_id)
+        weather = get_weather(connection, city_id, selected_date)
     if not weather:
         raise HTTPException(status_code=404)
     return response(weather, request)
 
 
 @app.get("/api/v1/routes/{route_id}/weather-profile")
-def weather_profile(route_id: int, request: Request):
+def weather_profile(
+    route_id: int,
+    request: Request,
+    observation_date: date | None = Query(default=None, alias="date"),
+    metrics: str | None = None,
+):
+    selected_date = resolve_weather_date(observation_date)
+    selected_metrics = parse_profile_metrics(metrics)
     with connect() as connection:
-        profile = get_weather_profile(connection, route_id)
+        profile = get_weather_profile(connection, route_id, selected_date, selected_metrics)
     if not profile:
         raise HTTPException(status_code=404)
     return response(profile, request)
+
+
+@app.get("/api/v1/routes/{route_id}/random-trip")
+def random_trip(
+    route_id: int,
+    request: Request,
+    observation_date: date | None = Query(default=None, alias="date"),
+):
+    selected_date = resolve_weather_date(observation_date)
+    with connect() as connection:
+        trip = get_random_trip(connection, route_id, selected_date)
+    if not trip:
+        raise HTTPException(status_code=404)
+    return response(trip, request)
 
 
 @app.get("/api/v1/routes/{route_id}/travel-advice")

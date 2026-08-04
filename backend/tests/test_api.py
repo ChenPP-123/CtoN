@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -8,6 +8,13 @@ from backend.seed import seed_database
 
 
 VALID_ADVICE = "沿线天气湿热多变，建议穿轻薄透气衣物并及时补水。重庆至恩施段可能有雨，请随身携带雨具。武汉以后注意防晒，空气质量整体适合出行。"
+
+
+def use_today_for_seeded_weather() -> str:
+    today = datetime.now(timezone.utc).date().isoformat()
+    with open_database() as connection:
+        connection.execute("UPDATE weather_observations SET observation_date = ?", (today,))
+    return today
 
 
 def test_health_returns_database_status() -> None:
@@ -29,9 +36,44 @@ def test_route_includes_seeded_stations_in_order() -> None:
 
 def test_weather_profile_is_ordered_by_station() -> None:
     with TestClient(app) as client:
+        use_today_for_seeded_weather()
         response = client.get("/api/v1/routes/1/weather-profile")
     assert response.status_code == 200
     assert [point["station_order"] for point in response.json()["data"]["points"]] == list(range(1, 9))
+
+
+def test_weather_profile_filters_requested_metrics() -> None:
+    with TestClient(app) as client:
+        today = use_today_for_seeded_weather()
+        response = client.get(
+            "/api/v1/routes/1/weather-profile",
+            params={"date": today, "metrics": "temperature,aqi,temperature"},
+        )
+
+    assert response.status_code == 200
+    profile = response.json()["data"]
+    assert profile["date"] == today
+    assert set(profile["points"][0]) == {
+        "city_id",
+        "city_name",
+        "station_order",
+        "distance_from_origin_km",
+        "temperature_c",
+        "aqi",
+    }
+
+
+def test_weather_profile_rejects_unknown_or_empty_metrics() -> None:
+    with TestClient(app) as client:
+        unknown_response = client.get(
+            "/api/v1/routes/1/weather-profile", params={"metrics": "temperature,pressure"}
+        )
+        empty_response = client.get(
+            "/api/v1/routes/1/weather-profile", params={"metrics": ""}
+        )
+
+    assert unknown_response.status_code == 422
+    assert empty_response.status_code == 422
 
 
 def test_unknown_city_returns_documented_not_found_response() -> None:
@@ -43,13 +85,53 @@ def test_unknown_city_returns_documented_not_found_response() -> None:
 
 def test_city_weather_no_longer_depends_on_generated_poem() -> None:
     with TestClient(app) as client:
+        use_today_for_seeded_weather()
         response = client.get("/api/v1/cities/1/weather")
     assert response.status_code == 200
     assert "poem" not in response.json()["data"]
 
 
+def test_city_weather_defaults_to_latest_available_observation() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/v1/cities/1/weather")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["weather"] is not None
+    assert response.json()["data"]["date"] == "2026-08-01"
+
+
+def test_city_weather_uses_requested_date() -> None:
+    requested_date = datetime.now(timezone.utc).date() - timedelta(days=1)
+    with TestClient(app) as client:
+        with open_database() as connection:
+            connection.execute(
+                "UPDATE weather_observations SET observation_date = ?",
+                (requested_date.isoformat(),),
+            )
+        response = client.get(
+            "/api/v1/cities/1/weather", params={"date": requested_date.isoformat()}
+        )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["date"] == requested_date.isoformat()
+    assert response.json()["data"]["weather"]["temperature_c"] == 29.4
+
+
+def test_weather_date_only_supports_recent_fifteen_days() -> None:
+    unsupported_date = datetime.now(timezone.utc).date() - timedelta(days=15)
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/cities/1/weather", params={"date": unsupported_date.isoformat()}
+        )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == 42200
+    assert "最近 15 个自然日" in response.json()["message"]
+
+
 def test_city_weather_exposes_pasquill_inputs_without_lapse_rate() -> None:
     with TestClient(app) as client:
+        use_today_for_seeded_weather()
         response = client.get("/api/v1/cities/1/weather")
 
     atmosphere = response.json()["data"]["atmosphere"]
@@ -57,6 +139,36 @@ def test_city_weather_exposes_pasquill_inputs_without_lapse_rate() -> None:
     assert atmosphere["method"] == "pasquill-turner-estimate"
     assert atmosphere["inputs"]["cloud_cover_percent"] == 70
     assert "lapse_rate_c_per_km" not in atmosphere
+
+
+def test_random_trip_returns_one_route_station_with_weather() -> None:
+    with TestClient(app) as client:
+        today = use_today_for_seeded_weather()
+        response = client.get(
+            "/api/v1/routes/1/random-trip", params={"date": today}
+        )
+
+    assert response.status_code == 200
+    trip = response.json()["data"]
+    assert trip["route_id"] == 1
+    assert trip["date"] == today
+    assert trip["station"]["station_order"] in range(1, 9)
+    assert trip["weather"] is not None
+    assert set(trip["weather"]) == {
+        "temperature_c",
+        "feels_like_c",
+        "text",
+        "humidity_percent",
+        "aqi",
+        "stability_level",
+    }
+
+
+def test_random_trip_returns_not_found_for_unknown_route() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/v1/routes/999/random-trip")
+
+    assert response.status_code == 404
 
 
 def test_city_poem_is_not_generated_on_demand() -> None:

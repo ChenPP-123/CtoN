@@ -4,10 +4,19 @@ from __future__ import annotations
 
 from datetime import date
 import json
+from random import choice
 import sqlite3
 from typing import Any
 
 from .travel_advice_validation import validate_travel_advice
+
+
+PROFILE_METRICS = {
+    "temperature": "temperature_c",
+    "humidity": "humidity_percent",
+    "aqi": "aqi",
+    "wind_speed": "wind_speed_ms",
+}
 
 
 def row_data(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -41,13 +50,28 @@ def get_city(connection: sqlite3.Connection, city_id: int) -> dict[str, Any] | N
     return row_data(connection.execute("SELECT id, name, city_code, province, longitude, latitude, description, climate_description FROM cities WHERE id = ?", (city_id,)).fetchone())
 
 
-def get_weather(connection: sqlite3.Connection, city_id: int) -> dict[str, Any] | None:
+def get_weather(
+    connection: sqlite3.Connection, city_id: int, observation_date: str | None
+) -> dict[str, Any] | None:
     city = get_city(connection, city_id)
     if not city:
         return None
-    weather = row_data(connection.execute("SELECT * FROM weather_observations WHERE city_id = ? ORDER BY observed_at DESC LIMIT 1", (city_id,)).fetchone())
+    if observation_date is None:
+        weather_query = "SELECT * FROM weather_observations WHERE city_id = ? ORDER BY observed_at DESC LIMIT 1"
+        weather_parameters = (city_id,)
+    else:
+        weather_query = "SELECT * FROM weather_observations WHERE city_id = ? AND observation_date = ?"
+        weather_parameters = (city_id, observation_date)
+    weather = row_data(connection.execute(weather_query, weather_parameters).fetchone())
     if not weather:
-        return {"city": city, "date": date.today().isoformat(), "observed_at": None, "weather": None, "air_quality": None, "atmosphere": None}
+        return {
+            "city": city,
+            "date": observation_date or date.today().isoformat(),
+            "observed_at": None,
+            "weather": None,
+            "air_quality": None,
+            "atmosphere": None,
+        }
     air_quality = row_data(connection.execute("SELECT aqi, pm25_ug_m3, pm10_ug_m3, primary_pollutant FROM air_quality_observations WHERE weather_observation_id = ?", (weather["id"],)).fetchone())
     atmosphere_row = row_data(connection.execute(
         """SELECT stability_class, stability_level, period, wind_speed_ms,
@@ -87,7 +111,12 @@ def _atmosphere_data(analysis: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
-def get_weather_profile(connection: sqlite3.Connection, route_id: int) -> dict[str, Any] | None:
+def get_weather_profile(
+    connection: sqlite3.Connection,
+    route_id: int,
+    observation_date: str,
+    metrics: tuple[str, ...],
+) -> dict[str, Any] | None:
     if not connection.execute("SELECT 1 FROM routes WHERE id = ?", (route_id,)).fetchone():
         return None
     rows = connection.execute(
@@ -98,10 +127,79 @@ def get_weather_profile(connection: sqlite3.Connection, route_id: int) -> dict[s
            LEFT JOIN weather_observations w ON w.city_id = c.id AND w.observation_date = ?
            LEFT JOIN air_quality_observations aq ON aq.weather_observation_id = w.id
            WHERE rs.route_id = ? ORDER BY rs.station_order""",
-        (date.today().isoformat(), route_id),
+        (observation_date, route_id),
     )
-    points = [dict(row) for row in rows]
-    return {"route_id": route_id, "date": date.today().isoformat(), "distance_unit": "km", "points": points, "missing_city_ids": [point["city_id"] for point in points if point["temperature_c"] is None]}
+    metric_fields = [PROFILE_METRICS[metric] for metric in metrics]
+    points = [
+        {
+            "city_id": row["city_id"],
+            "city_name": row["city_name"],
+            "station_order": row["station_order"],
+            "distance_from_origin_km": row["distance_from_origin_km"],
+            **{field: row[field] for field in metric_fields},
+        }
+        for row in rows
+    ]
+    return {
+        "route_id": route_id,
+        "date": observation_date,
+        "distance_unit": "km",
+        "points": points,
+        "missing_city_ids": [
+            point["city_id"]
+            for point in points
+            if all(point[field] is None for field in metric_fields)
+        ],
+    }
+
+
+def get_random_trip(
+    connection: sqlite3.Connection, route_id: int, observation_date: str
+) -> dict[str, Any] | None:
+    if not connection.execute("SELECT 1 FROM routes WHERE id = ?", (route_id,)).fetchone():
+        return None
+    stations = connection.execute(
+        """SELECT rs.city_id, c.name AS city_name, rs.station_name, rs.station_order,
+                  rs.distance_from_origin_km, w.temperature_c, w.feels_like_c,
+                  w.weather_text, w.humidity_percent, aq.aqi, aa.stability_level
+           FROM route_stations rs
+           JOIN cities c ON c.id = rs.city_id
+           LEFT JOIN weather_observations w
+                  ON w.city_id = c.id AND w.observation_date = ?
+           LEFT JOIN air_quality_observations aq ON aq.weather_observation_id = w.id
+           LEFT JOIN atmosphere_analyses aa ON aa.weather_observation_id = w.id
+           WHERE rs.route_id = ? ORDER BY rs.station_order""",
+        (observation_date, route_id),
+    ).fetchall()
+    if not stations:
+        return None
+
+    station = choice(stations)
+    weather = None
+    if station["temperature_c"] is not None:
+        weather = {
+            "temperature_c": station["temperature_c"],
+            "feels_like_c": station["feels_like_c"],
+            "text": station["weather_text"],
+            "humidity_percent": station["humidity_percent"],
+            "aqi": station["aqi"],
+            "stability_level": station["stability_level"],
+        }
+    return {
+        "route_id": route_id,
+        "date": observation_date,
+        "station": {
+            key: station[key]
+            for key in (
+                "city_id",
+                "city_name",
+                "station_name",
+                "station_order",
+                "distance_from_origin_km",
+            )
+        },
+        "weather": weather,
+    }
 
 
 def get_latest_travel_advice(connection: sqlite3.Connection, route_id: int) -> dict[str, Any] | None:
