@@ -21,12 +21,13 @@ const insolationLabels = { strong: '强日照', moderate: '中等日照', slight
       <dl class="weather-grid">
         <div><dt>湿度</dt><dd>{{ value(weatherData.weather.humidity_percent, '%') }}</dd></div>
         <div><dt>风况</dt><dd>{{ value(weatherData.weather.wind_speed_ms, ' m/s') }}</dd></div>
-        <div><dt>降水概率</dt><dd>{{ value(weatherData.weather.precipitation_probability_percent, '%') }}</dd></div>
+        <div v-if="weatherData.weather.precipitation_probability_percent !== null && weatherData.weather.precipitation_probability_percent !== undefined"><dt>降水概率</dt><dd>{{ value(weatherData.weather.precipitation_probability_percent, '%') }}</dd></div>
+        <div v-else><dt>风向</dt><dd>{{ value(weatherData.weather.wind_direction) }}</dd></div>
         <div><dt>能见度</dt><dd>{{ value(weatherData.weather.visibility_km, ' km') }}</dd></div>
       </dl>
       <section class="air-quality"><div><span>AQI</span><strong>{{ weatherData.air_quality?.aqi ?? '—' }}</strong></div><p>PM2.5 {{ value(weatherData.air_quality?.pm25_ug_m3, ' µg/m³') }}<br>{{ weatherData.air_quality?.primary_pollutant || '暂无首要污染物' }}</p></section>
       <section v-if="weatherData.atmosphere" class="stability-analysis">
-        <header><span>帕斯奎尔稳定度</span><small>近似判级</small></header>
+        <header><span>Pasquill 稳定度</span><small>近似判级</small></header>
         <div class="stability-reading">
           <strong>{{ weatherData.atmosphere.stability_class }}</strong>
           <div><b>{{ weatherData.atmosphere.stability_level }}</b><span>{{ weatherData.atmosphere.explanation }}</span></div>
@@ -40,7 +41,7 @@ const insolationLabels = { strong: '强日照', moderate: '中等日照', slight
         <p>基于地面风速、云量和太阳位置估算，不用于监管判定。</p>
       </section>
       <section v-else class="stability-analysis stability-unavailable">
-        <header><span>帕斯奎尔稳定度</span><small>数据不足</small></header>
+        <header><span>Pasquill 稳定度</span><small>数据不足</small></header>
         <p>观测缺少风速或云量，暂无法判级。</p>
       </section>
     </template>

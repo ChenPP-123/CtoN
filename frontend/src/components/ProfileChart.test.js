@@ -69,6 +69,7 @@ describe('ProfileChart', () => {
     expect(echartsMocks.setOption).toHaveBeenCalled()
     const option = echartsMocks.setOption.mock.calls.at(-1)[0]
     expect(option.xAxis.data).toHaveLength(8)
+    expect(option.yAxis.axisLabel.fontSize).toBe(9)
     expect(option.series[0].data).toHaveLength(8)
   })
 
