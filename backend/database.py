@@ -86,6 +86,7 @@ def initialize_database() -> None:
                 wind_direction TEXT,
                 precipitation_probability_percent INTEGER,
                 visibility_km REAL,
+                cloud_cover_percent INTEGER,
                 source TEXT NOT NULL,
                 UNIQUE(city_id, observation_date)
             );
@@ -98,17 +99,6 @@ def initialize_database() -> None:
                 pm25_ug_m3 REAL,
                 pm10_ug_m3 REAL,
                 primary_pollutant TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS atmosphere_analyses (
-                id INTEGER PRIMARY KEY,
-                weather_observation_id INTEGER NOT NULL UNIQUE REFERENCES weather_observations(id) ON DELETE CASCADE,
-                city_id INTEGER NOT NULL REFERENCES cities(id) ON DELETE RESTRICT,
-                stability_level TEXT NOT NULL,
-                lapse_rate_c_per_km REAL NOT NULL,
-                pressure_hpa REAL,
-                explanation TEXT NOT NULL,
-                calculation_version TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS travel_reports (
@@ -132,6 +122,8 @@ def initialize_database() -> None:
             """
         )
         _add_route_station_coordinate_columns(connection)
+        _add_weather_cloud_cover_column(connection)
+        _initialize_atmosphere_analyses(connection)
 
 
 def _add_route_station_coordinate_columns(connection: sqlite3.Connection) -> None:
@@ -141,3 +133,34 @@ def _add_route_station_coordinate_columns(connection: sqlite3.Connection) -> Non
         connection.execute("ALTER TABLE route_stations ADD COLUMN longitude REAL")
     if "latitude" not in columns:
         connection.execute("ALTER TABLE route_stations ADD COLUMN latitude REAL")
+
+
+def _add_weather_cloud_cover_column(connection: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(weather_observations)")}
+    if "cloud_cover_percent" not in columns:
+        connection.execute("ALTER TABLE weather_observations ADD COLUMN cloud_cover_percent INTEGER")
+
+
+def _initialize_atmosphere_analyses(connection: sqlite3.Connection) -> None:
+    """Replace the obsolete lapse-rate table; its rows are derived and can be recalculated."""
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(atmosphere_analyses)")}
+    if columns and "stability_class" not in columns:
+        connection.execute("DROP TABLE atmosphere_analyses")
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS atmosphere_analyses (
+               id INTEGER PRIMARY KEY,
+               weather_observation_id INTEGER NOT NULL UNIQUE REFERENCES weather_observations(id) ON DELETE CASCADE,
+               city_id INTEGER NOT NULL REFERENCES cities(id) ON DELETE RESTRICT,
+               stability_class TEXT NOT NULL,
+               stability_level TEXT NOT NULL,
+               period TEXT NOT NULL,
+               wind_speed_ms REAL NOT NULL,
+               cloud_cover_percent INTEGER NOT NULL,
+               solar_elevation_deg REAL NOT NULL,
+               insolation_category TEXT,
+               confidence TEXT NOT NULL,
+               method TEXT NOT NULL,
+               explanation TEXT NOT NULL,
+               calculation_version TEXT NOT NULL
+           )"""
+    )

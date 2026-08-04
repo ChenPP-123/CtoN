@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from .stability_service import replace_stability_analysis
+
 
 DEMO_DATE = "2026-08-01"
 OBSERVED_AT = "2026-08-01T08:00:00Z"
@@ -68,32 +70,32 @@ def _city_copy(name: str) -> tuple[str, str]:
 
 def _seed_observations(connection: sqlite3.Connection, city_ids: dict[str, int]) -> None:
     weather_rows = [
-        ("101040100", 29.4, 33.1, "多云", 104, 78, 2.1, "东南风", 35, 8.0, 62, 38, 61, "PM2.5"),
-        ("101041300", 28.6, 32.4, "阴", 103, 82, 1.7, "东风", 40, 7.0, 55, 29, 48, "PM2.5"),
-        ("101201001", 27.8, 31.0, "小雨", 305, 86, 1.4, "东北风", 75, 5.5, 51, 25, 42, None),
-        ("101200901", 30.1, 34.0, "多云", 104, 73, 2.3, "东南风", 30, 9.0, 49, 23, 39, None),
-        ("101200801", 30.5, 34.6, "晴", 100, 68, 2.6, "南风", 15, 12.0, 46, 21, 36, None),
-        ("101200101", 31.0, 35.0, "晴", 100, 65, 2.8, "南风", 15, 12.0, 48, 24, 45, None),
-        ("101220101", 30.8, 34.8, "多云", 101, 70, 2.2, "东南风", 25, 10.0, 53, 28, 46, "PM2.5"),
-        ("101190101", 30.2, 34.2, "小雨", 305, 82, 1.9, "东风", 70, 6.0, 55, 31, 52, "PM2.5"),
+        ("101040100", 29.4, 33.1, "多云", 104, 78, 2.1, "东南风", 35, 8.0, 70, 62, 38, 61, "PM2.5"),
+        ("101041300", 28.6, 32.4, "阴", 103, 82, 1.7, "东风", 40, 7.0, 92, 55, 29, 48, "PM2.5"),
+        ("101201001", 27.8, 31.0, "小雨", 305, 86, 1.4, "东北风", 75, 5.5, 88, 51, 25, 42, None),
+        ("101200901", 30.1, 34.0, "多云", 104, 73, 2.3, "东南风", 30, 9.0, 64, 49, 23, 39, None),
+        ("101200801", 30.5, 34.6, "晴", 100, 68, 2.6, "南风", 15, 12.0, 18, 46, 21, 36, None),
+        ("101200101", 31.0, 35.0, "晴", 100, 65, 2.8, "南风", 15, 12.0, 12, 48, 24, 45, None),
+        ("101220101", 30.8, 34.8, "多云", 101, 70, 2.2, "东南风", 25, 10.0, 55, 53, 28, 46, "PM2.5"),
+        ("101190101", 30.2, 34.2, "小雨", 305, 82, 1.9, "东风", 70, 6.0, 86, 55, 31, 52, "PM2.5"),
     ]
-    for city_code, temperature, feels_like, text, code, humidity, wind_speed, wind_direction, precipitation, visibility, aqi, pm25, pm10, pollutant in weather_rows:
+    for city_code, temperature, feels_like, text, code, humidity, wind_speed, wind_direction, precipitation, visibility, cloud_cover, aqi, pm25, pm10, pollutant in weather_rows:
         city_id = city_ids[city_code]
         connection.execute(
             """INSERT INTO weather_observations (
                    city_id, observation_date, observed_at, temperature_c, feels_like_c, weather_text,
                    weather_code, humidity_percent, wind_speed_ms, wind_direction,
-                   precipitation_probability_percent, visibility_km, source
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   precipitation_probability_percent, visibility_km, cloud_cover_percent, source
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(city_id, observation_date) DO UPDATE SET
                  observed_at = excluded.observed_at, temperature_c = excluded.temperature_c,
                  feels_like_c = excluded.feels_like_c, weather_text = excluded.weather_text,
                  weather_code = excluded.weather_code, humidity_percent = excluded.humidity_percent,
                  wind_speed_ms = excluded.wind_speed_ms, wind_direction = excluded.wind_direction,
                  precipitation_probability_percent = excluded.precipitation_probability_percent,
-                 visibility_km = excluded.visibility_km
+                 visibility_km = excluded.visibility_km, cloud_cover_percent = excluded.cloud_cover_percent
                WHERE weather_observations.source = 'local-demo'""",
-            (city_id, DEMO_DATE, OBSERVED_AT, temperature, feels_like, text, code, humidity, wind_speed, wind_direction, precipitation, visibility, "local-demo"),
+            (city_id, DEMO_DATE, OBSERVED_AT, temperature, feels_like, text, code, humidity, wind_speed, wind_direction, precipitation, visibility, cloud_cover, "local-demo"),
         )
         observation = connection.execute(
             "SELECT id FROM weather_observations WHERE city_id = ? AND observation_date = ?", (city_id, DEMO_DATE)
@@ -106,4 +108,17 @@ def _seed_observations(connection: sqlite3.Connection, city_ids: dict[str, int])
                  pm10_ug_m3 = excluded.pm10_ug_m3, primary_pollutant = excluded.primary_pollutant
                WHERE (SELECT source FROM weather_observations WHERE id = air_quality_observations.weather_observation_id) = 'local-demo'""",
             (observation["id"], city_id, aqi, pm25, pm10, pollutant),
+        )
+        city = connection.execute(
+            "SELECT latitude, longitude FROM cities WHERE id = ?", (city_id,)
+        ).fetchone()
+        replace_stability_analysis(
+            connection,
+            weather_observation_id=observation["id"],
+            city_id=city_id,
+            observed_at=OBSERVED_AT,
+            latitude=city["latitude"],
+            longitude=city["longitude"],
+            wind_speed_ms=wind_speed,
+            cloud_cover_percent=cloud_cover,
         )

@@ -59,7 +59,7 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 | 风速 | m/s |
 | 距离、能见度 | km |
 | 气压 | hPa |
-| 温度直减率 | °C/km |
+| 太阳高度角 | ° |
 | 污染物浓度 | µg/m³ |
 
 日期不传时，查询接口默认使用服务器当前 UTC 日期。当前动态数据只保留最近 15 个自然日，超出范围返回 `422`。
@@ -286,16 +286,24 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
     "primary_pollutant": "PM2.5"
   },
   "atmosphere": {
-    "stability_level": "弱不稳定",
-    "lapse_rate_c_per_km": 8.2,
-    "pressure_hpa": 985.0,
-    "explanation": "午后地面加热增强，垂直混合作用增强。",
-    "calculation_version": "v1"
+    "stability_class": "B-C",
+    "stability_level": "不稳定至弱不稳定",
+    "period": "day",
+    "insolation_category": "moderate",
+    "confidence": "estimated",
+    "method": "pasquill-turner-estimate",
+    "inputs": {
+      "wind_speed_ms": 3.4,
+      "cloud_cover_percent": 35,
+      "solar_elevation_deg": 52.1
+    },
+    "explanation": "当前处于白天，中等日照、云量35%，风速3.4 m/s，近地层估算为不稳定至弱不稳定。",
+    "calculation_version": "pasquill-v1"
   }
 }
 ```
 
-天气、空气质量或气象分析暂时不存在时，对应字段返回 `null`，整体接口仍可成功返回。城市诗句由前端图片注册表提供，不属于天气接口。
+天气、空气质量或气象分析暂时不存在时，对应字段返回 `null`，整体接口仍可成功返回。稳定度使用帕斯奎尔方法近似判级，保留 `A-B`、`B-C`、`C-D` 过渡等级；由于数据源没有云底高度和风速观测高度，结果仅用于教学展示。城市诗句由前端图片注册表提供，不属于天气接口。
 
 ### 4.6 获取沿线气象剖面
 
@@ -421,12 +429,14 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 
 - 后端配置：`QWEATHER_API_KEY`、`QWEATHER_BASE_URL`；
 - 通过 `cities.city_code` 查询城市；
-- 获取当前天气、空气质量和预报所需字段；
+- 获取当前天气、空气质量，以及稳定度判级所需的观测时间、风速和总云量；
 - 统一转换为 `weather_observations` 和 `air_quality_observations`；
 - 保存 `source = "qweather"` 和必要的 `raw_payload_json`；
 - 请求超时建议 5 秒，失败时不覆盖数据库中已有有效数据。
 
 和风 API 的字段名不直接暴露给前端。例如和风的天气描述应转换为 `weather.text`，温度应转换为 `temperature_c`。
+
+太阳高度、日出和日落由后端根据城市经纬度及 `observed_at` 本地计算，不调用太阳辐射 API。白天按太阳高度划分日照等级，并在总云量超过 50% 时降低一级；全阴按中性 D 处理。夜间从日落前一小时持续到日出后一小时，按云量和风速查表。缺少风速、云量或有效时区时不生成稳定度记录。
 
 ### 5.2 高德地图 API
 

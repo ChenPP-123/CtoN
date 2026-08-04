@@ -28,6 +28,8 @@ class DeepSeekClient:
                 {"role": "system", "content": "你是一位严谨、简洁的中国高铁旅行气象顾问。"},
                 {"role": "user", "content": prompt},
             ],
+            "thinking": {"type": "disabled"},
+            "stream": False,
             "temperature": 0.5,
             "max_tokens": 400,
         }
@@ -42,11 +44,13 @@ class DeepSeekClient:
             raise DeepSeekError("DeepSeek 返回了非 JSON 响应") from error
         content = _message_content(body)
         if not content:
-            raise DeepSeekError("DeepSeek 响应未包含路线建议")
+            raise DeepSeekError(_missing_content_message(body))
         return content
 
 
-def _message_content(body: dict[str, Any]) -> str | None:
+def _message_content(body: Any) -> str | None:
+    if not isinstance(body, dict):
+        return None
     choices = body.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
         return None
@@ -55,3 +59,24 @@ def _message_content(body: dict[str, Any]) -> str | None:
         return None
     content = message["content"].strip()
     return content or None
+
+
+def _missing_content_message(body: Any) -> str:
+    finish_reason = _finish_reason(body)
+    if finish_reason == "length":
+        return "DeepSeek 输出额度耗尽，未返回路线建议（finish_reason=length）"
+    if finish_reason == "content_filter":
+        return "DeepSeek 路线建议被内容过滤（finish_reason=content_filter）"
+    if finish_reason == "insufficient_system_resource":
+        return "DeepSeek 服务资源不足，未返回路线建议（finish_reason=insufficient_system_resource）"
+    return f"DeepSeek 响应缺少路线建议正文（finish_reason={finish_reason or 'unknown'}）"
+
+
+def _finish_reason(body: Any) -> str | None:
+    if not isinstance(body, dict):
+        return None
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return None
+    finish_reason = choices[0].get("finish_reason")
+    return finish_reason if isinstance(finish_reason, str) and finish_reason else None

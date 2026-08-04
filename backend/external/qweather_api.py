@@ -26,6 +26,7 @@ class CurrentWeather:
     wind_direction: str | None
     visibility_km: float | None
     pressure_hpa: float | None
+    cloud_cover_percent: int | None
     raw_payload: dict[str, Any]
 
 
@@ -61,6 +62,7 @@ class QWeatherClient:
             wind_direction=_to_optional_text(now.get("windDir")),
             visibility_km=_to_optional_float(now.get("vis")),
             pressure_hpa=_to_optional_float(now.get("pressure")),
+            cloud_cover_percent=_percentage(now.get("cloud")),
             raw_payload=payload,
         )
 
@@ -142,6 +144,11 @@ def _to_optional_float(value: object) -> float | None:
 def _to_optional_int(value: object) -> int | None:
     parsed = _to_optional_float(value)
     return int(parsed) if parsed is not None else None
+
+
+def _percentage(value: object) -> int | None:
+    parsed = _to_optional_int(value)
+    return parsed if parsed is not None and 0 <= parsed <= 100 else None
 
 
 def _to_optional_text(value: object) -> str | None:

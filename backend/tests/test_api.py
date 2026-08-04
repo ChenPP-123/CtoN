@@ -48,6 +48,17 @@ def test_city_weather_no_longer_depends_on_generated_poem() -> None:
     assert "poem" not in response.json()["data"]
 
 
+def test_city_weather_exposes_pasquill_inputs_without_lapse_rate() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/v1/cities/1/weather")
+
+    atmosphere = response.json()["data"]["atmosphere"]
+    assert atmosphere["stability_class"] in {"A", "A-B", "B", "B-C", "C", "C-D", "D", "E", "F"}
+    assert atmosphere["method"] == "pasquill-turner-estimate"
+    assert atmosphere["inputs"]["cloud_cover_percent"] == 70
+    assert "lapse_rate_c_per_km" not in atmosphere
+
+
 def test_city_poem_is_not_generated_on_demand() -> None:
     with TestClient(app) as client:
         response = client.post("/api/v1/cities/1/poem")
@@ -92,3 +103,29 @@ def test_database_migration_adds_station_coordinates(monkeypatch, tmp_path) -> N
         station = connection.execute("SELECT longitude, latitude FROM route_stations WHERE route_id = 1 AND city_id = 1").fetchone()
     assert station["longitude"] is not None
     assert station["latitude"] is not None
+
+
+def test_database_migration_replaces_obsolete_atmosphere_schema(monkeypatch, tmp_path) -> None:
+    database_path = tmp_path / "legacy-atmosphere.db"
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+    import sqlite3
+
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """CREATE TABLE atmosphere_analyses (
+               id INTEGER PRIMARY KEY, weather_observation_id INTEGER NOT NULL,
+               city_id INTEGER NOT NULL, stability_level TEXT NOT NULL,
+               lapse_rate_c_per_km REAL NOT NULL, pressure_hpa REAL,
+               explanation TEXT NOT NULL, calculation_version TEXT NOT NULL
+           )"""
+    )
+    connection.commit()
+    connection.close()
+
+    initialize_database()
+
+    with open_database() as connection:
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(atmosphere_analyses)")}
+    assert "stability_class" in columns
+    assert "solar_elevation_deg" in columns
+    assert "lapse_rate_c_per_km" not in columns

@@ -13,7 +13,7 @@ def test_qweather_client_converts_weather_units_and_air_quality(monkeypatch) -> 
                 "now": {
                     "obsTime": "2026-08-01T12:00+08:00", "temp": "30", "feelsLike": "33",
                     "icon": "104", "text": "阴", "humidity": "75", "windSpeed": "18",
-                    "windDir": "东风", "vis": "9", "pressure": "1002",
+                    "windDir": "东风", "vis": "9", "pressure": "1002", "cloud": "86",
                 },
             })
         return httpx.Response(200, request=request, json={
@@ -32,6 +32,7 @@ def test_qweather_client_converts_weather_units_and_air_quality(monkeypatch) -> 
 
     assert weather.wind_speed_ms == 5.0
     assert weather.temperature_c == 30.0
+    assert weather.cloud_cover_percent == 86
     assert air_quality.aqi == 42
     assert air_quality.pm25_ug_m3 == 18.5
     assert air_quality.pm10_ug_m3 == 34.0

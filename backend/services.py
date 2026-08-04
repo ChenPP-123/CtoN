@@ -49,7 +49,14 @@ def get_weather(connection: sqlite3.Connection, city_id: int) -> dict[str, Any] 
     if not weather:
         return {"city": city, "date": date.today().isoformat(), "observed_at": None, "weather": None, "air_quality": None, "atmosphere": None}
     air_quality = row_data(connection.execute("SELECT aqi, pm25_ug_m3, pm10_ug_m3, primary_pollutant FROM air_quality_observations WHERE weather_observation_id = ?", (weather["id"],)).fetchone())
-    atmosphere = row_data(connection.execute("SELECT stability_level, lapse_rate_c_per_km, pressure_hpa, explanation, calculation_version FROM atmosphere_analyses WHERE weather_observation_id = ?", (weather["id"],)).fetchone())
+    atmosphere_row = row_data(connection.execute(
+        """SELECT stability_class, stability_level, period, wind_speed_ms,
+                  cloud_cover_percent, solar_elevation_deg, insolation_category,
+                  confidence, method, explanation, calculation_version
+           FROM atmosphere_analyses WHERE weather_observation_id = ?""",
+        (weather["id"],),
+    ).fetchone())
+    atmosphere = _atmosphere_data(atmosphere_row)
     return {
         "city": {key: city[key] for key in ("id", "name", "longitude", "latitude")},
         "date": weather["observation_date"],
@@ -57,6 +64,26 @@ def get_weather(connection: sqlite3.Connection, city_id: int) -> dict[str, Any] 
         "weather": {"temperature_c": weather["temperature_c"], "feels_like_c": weather["feels_like_c"], "text": weather["weather_text"], "code": weather["weather_code"], "humidity_percent": weather["humidity_percent"], "wind_speed_ms": weather["wind_speed_ms"], "wind_direction": weather["wind_direction"], "precipitation_probability_percent": weather["precipitation_probability_percent"], "visibility_km": weather["visibility_km"]},
         "air_quality": air_quality,
         "atmosphere": atmosphere,
+    }
+
+
+def _atmosphere_data(analysis: dict[str, Any] | None) -> dict[str, Any] | None:
+    if analysis is None:
+        return None
+    return {
+        "stability_class": analysis["stability_class"],
+        "stability_level": analysis["stability_level"],
+        "period": analysis["period"],
+        "insolation_category": analysis["insolation_category"],
+        "confidence": analysis["confidence"],
+        "method": analysis["method"],
+        "inputs": {
+            "wind_speed_ms": analysis["wind_speed_ms"],
+            "cloud_cover_percent": analysis["cloud_cover_percent"],
+            "solar_elevation_deg": analysis["solar_elevation_deg"],
+        },
+        "explanation": analysis["explanation"],
+        "calculation_version": analysis["calculation_version"],
     }
 
 

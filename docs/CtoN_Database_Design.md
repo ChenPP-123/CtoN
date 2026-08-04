@@ -42,7 +42,7 @@ SQLite 没有独立的 `BOOLEAN`、`DATE`、`DATETIME` 类型，因此使用以�
 | 时间 | `TEXT` | UTC ISO 8601：`YYYY-MM-DDTHH:MM:SSZ` |
 | JSON | `TEXT` | 合法 JSON 字符串；仅用于外部原始响应或结构化报告 |
 
-所有距离单位为 km，温度为 °C，湿度和降水概率为 %，风速为 m/s，能见度为 km，气压为 hPa，温度直减率为 °C/km，污染物浓度为 µg/m³。
+所有距离单位为 km，温度为 °C，湿度、云量和降水概率为 %，风速为 m/s，能见度为 km，太阳高度角为度，污染物浓度为 µg/m³。
 
 ## 3. ER 设计
 
@@ -102,6 +102,7 @@ erDiagram
         TEXT wind_direction
         INTEGER precipitation_probability_percent
         REAL visibility_km
+        INTEGER cloud_cover_percent
         TEXT source
     }
     air_quality_observations {
@@ -117,9 +118,15 @@ erDiagram
         INTEGER id PK
         INTEGER weather_observation_id FK
         INTEGER city_id FK
+        TEXT stability_class
         TEXT stability_level
-        REAL lapse_rate_c_per_km
-        REAL pressure_hpa
+        TEXT period
+        REAL wind_speed_ms
+        INTEGER cloud_cover_percent
+        REAL solar_elevation_deg
+        TEXT insolation_category
+        TEXT confidence
+        TEXT method
         TEXT explanation
         TEXT calculation_version
     }
@@ -206,6 +213,7 @@ erDiagram
 | `wind_direction` | `TEXT` | NULL | 风向，如东北风 |
 | `precipitation_probability_percent` | `INTEGER` | NULL, CHECK BETWEEN 0 AND 100 | 降水概率 |
 | `visibility_km` | `REAL` | NULL, CHECK >= 0 | 能见度 |
+| `cloud_cover_percent` | `INTEGER` | NULL, CHECK BETWEEN 0 AND 100 | 总云量，用于稳定度估算 |
 | `source` | `TEXT` | NOT NULL | 数据源，如 `qweather` |
 | `raw_payload_json` | `TEXT` | NULL | 原始 API 响应，便于审计 |
 | `created_at` | `TEXT` | NOT NULL | 入库时间 |
@@ -232,9 +240,15 @@ erDiagram
 | `id` | `INTEGER` | PK | 分析记录 ID |
 | `weather_observation_id` | `INTEGER` | NOT NULL, UNIQUE, FK `weather_observations.id` CASCADE | 对应天气快照 |
 | `city_id` | `INTEGER` | NOT NULL, FK `cities.id` RESTRICT | 城市 |
+| `stability_class` | `TEXT` | NOT NULL | 帕斯奎尔等级，如 `B-C` |
 | `stability_level` | `TEXT` | NOT NULL | 稳定度，如稳定、弱不稳定、不稳定 |
-| `lapse_rate_c_per_km` | `REAL` | NOT NULL | 温度直减率 |
-| `pressure_hpa` | `REAL` | NULL, CHECK > 0 | 地面气压 |
+| `period` | `TEXT` | NOT NULL | `day` 或 `night` |
+| `wind_speed_ms` | `REAL` | NOT NULL | 判级使用的地面风速 |
+| `cloud_cover_percent` | `INTEGER` | NOT NULL | 判级使用的总云量 |
+| `solar_elevation_deg` | `REAL` | NOT NULL | 本地计算的太阳高度角 |
+| `insolation_category` | `TEXT` | NULL | 白天日照等级；夜间为空 |
+| `confidence` | `TEXT` | NOT NULL | `estimated` 或因云底缺失而标记的 `low` |
+| `method` | `TEXT` | NOT NULL | `pasquill-turner-estimate` |
 | `explanation` | `TEXT` | NOT NULL | 面向用户的气象解释 |
 | `calculation_version` | `TEXT` | NOT NULL | 计算规则版本 |
 | `created_at` | `TEXT` | NOT NULL | 计算时间 |
@@ -259,6 +273,7 @@ erDiagram
 - 删除城市前必须先移除其线路节点和气象数据；生产环境建议禁止删除，改为业务层归档。
 - `air_quality_observations.city_id` 和对应天气记录的 `city_id` 必须相同；SQLAlchemy 写入时由服务层校验。
 - `atmosphere_analyses` 的输入是天气快照，计算规则变化时更新 `calculation_version` 并重新计算。
+- 稳定度为可重新生成的派生数据。风速、云量或带时区的观测时间缺失时，不保留对应分析记录。
 - 外部 API 失败时不覆盖已有有效快照；任务失败应由调度器记录日志并重试。
 - `source_snapshot_json`、`geometry_json` 写入前必须通过 JSON 序列化，读取后必须校验结构。
 - 当前设计只保存每日快照。如果将来需要小时级曲线，应新增小时观测表，不改变每日查询接口的数据含义。
@@ -372,6 +387,7 @@ CREATE TABLE weather_observations (
     wind_direction TEXT,
     precipitation_probability_percent INTEGER CHECK (precipitation_probability_percent BETWEEN 0 AND 100),
     visibility_km REAL CHECK (visibility_km >= 0),
+    cloud_cover_percent INTEGER CHECK (cloud_cover_percent BETWEEN 0 AND 100),
     source TEXT NOT NULL,
     raw_payload_json TEXT,
     created_at TEXT NOT NULL,
@@ -417,11 +433,11 @@ VALUES
 INSERT INTO weather_observations
     (id, city_id, observation_date, observed_at, temperature_c, feels_like_c,
      weather_text, weather_code, humidity_percent, wind_speed_ms, wind_direction,
-     precipitation_probability_percent, visibility_km, source, created_at)
+     precipitation_probability_percent, visibility_km, cloud_cover_percent, source, created_at)
 VALUES
-    (1001, 1, '2026-07-30', '2026-07-30T08:00:00Z', 29.4, 33.1, '多云', 104, 78, 2.1, '东南风', 35, 8.0, 'qweather', '2026-07-30T08:05:00Z'),
-    (1002, 2, '2026-07-30', '2026-07-30T08:00:00Z', 31.0, 35.0, '晴', 100, 65, 2.8, '南风', 15, 12.0, 'qweather', '2026-07-30T08:05:00Z'),
-    (1003, 3, '2026-07-30', '2026-07-30T08:00:00Z', 30.2, 34.2, '小雨', 305, 82, 1.9, '东风', 70, 6.0, 'qweather', '2026-07-30T08:05:00Z');
+    (1001, 1, '2026-07-30', '2026-07-30T08:00:00Z', 29.4, 33.1, '多云', 104, 78, 2.1, '东南风', 35, 8.0, 70, 'qweather', '2026-07-30T08:05:00Z'),
+    (1002, 2, '2026-07-30', '2026-07-30T08:00:00Z', 31.0, 35.0, '晴', 100, 65, 2.8, '南风', 15, 12.0, 18, 'qweather', '2026-07-30T08:05:00Z'),
+    (1003, 3, '2026-07-30', '2026-07-30T08:00:00Z', 30.2, 34.2, '小雨', 305, 82, 1.9, '东风', 70, 6.0, 86, 'qweather', '2026-07-30T08:05:00Z');
 
 INSERT INTO air_quality_observations
     (weather_observation_id, city_id, aqi, pm25_ug_m3, pm10_ug_m3, primary_pollutant, created_at)
@@ -431,12 +447,13 @@ VALUES
     (1003, 3, 55, 31.0, 52.0, 'PM2.5', '2026-07-30T08:06:00Z');
 
 INSERT INTO atmosphere_analyses
-    (weather_observation_id, city_id, stability_level, lapse_rate_c_per_km,
-     pressure_hpa, explanation, calculation_version, created_at)
+    (weather_observation_id, city_id, stability_class, stability_level, period,
+     wind_speed_ms, cloud_cover_percent, solar_elevation_deg, insolation_category,
+     confidence, method, explanation, calculation_version)
 VALUES
-    (1001, 1, '弱不稳定', 8.2, 985.0, '午后地面加热增强，垂直混合作用增强。', 'v1', '2026-07-30T08:10:00Z'),
-    (1002, 2, '不稳定', 9.5, 1002.0, '地面升温明显，有利于近地层空气交换。', 'v1', '2026-07-30T08:10:00Z'),
-    (1003, 3, '中性', 6.1, 1008.0, '云雨天气削弱地面加热，垂直混合处于中等水平。', 'v1', '2026-07-30T08:10:00Z');
+    (1001, 1, 'C', '弱不稳定', 'day', 2.1, 70, 42.0, 'slight', 'low', 'pasquill-turner-estimate', '白天弱日照条件下，近地层估算为弱不稳定。', 'pasquill-v1'),
+    (1002, 2, 'B', '不稳定', 'day', 2.8, 18, 50.0, 'moderate', 'estimated', 'pasquill-turner-estimate', '白天中等日照条件下，近地层估算为不稳定。', 'pasquill-v1'),
+    (1003, 3, 'F', '稳定', 'night', 1.9, 86, -8.0, NULL, 'estimated', 'pasquill-turner-estimate', '夜间低风速条件下，近地层估算为稳定。', 'pasquill-v1');
 
 INSERT INTO travel_reports
     (route_id, travel_date, content, model_name, prompt_hash, generated_at, source_snapshot_json)
