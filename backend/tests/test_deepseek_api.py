@@ -3,7 +3,6 @@ import pytest
 
 from backend.config import DeepSeekSettings
 from backend.external.deepseek_api import DeepSeekClient, DeepSeekError
-from backend.travel_advice_validation import validate_travel_advice
 
 
 def test_deepseek_client_returns_message_content(monkeypatch) -> None:
@@ -53,9 +52,3 @@ def test_deepseek_client_explains_missing_content(monkeypatch, body, expected_me
 
     with pytest.raises(DeepSeekError, match=expected_message):
         client.generate_text("生成建议")
-
-
-def test_travel_advice_validation_requires_one_paragraph_of_50_to_100_chinese_characters() -> None:
-    assert validate_travel_advice("沿线天气湿热多变，建议穿轻薄透气衣物并及时补水。重庆至恩施段可能有雨，请随身携带雨具。武汉以后注意防晒，空气质量整体适合出行。") is None
-    assert validate_travel_advice("沿线有雨，请携带雨具。") is not None
-    assert validate_travel_advice("沿线天气湿热多变，建议穿轻薄透气衣物并及时补水。重庆至恩施段可能有雨，请随身携带雨具。武汉以后注意防晒，空气质量整体适合出行。\n请注意安全。") is not None

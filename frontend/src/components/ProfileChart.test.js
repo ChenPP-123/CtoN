@@ -1,10 +1,7 @@
-// @vitest-environment jsdom
-
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ProfileChart from './ProfileChart.vue'
-
 
 const echartsMocks = vi.hoisted(() => ({
   init: vi.fn(),
@@ -30,7 +27,6 @@ const observe = vi.fn()
 const disconnect = vi.fn()
 
 beforeEach(() => {
-  vi.clearAllMocks()
   echartsMocks.init.mockReturnValue({
     setOption: echartsMocks.setOption,
     resize: echartsMocks.resize,

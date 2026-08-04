@@ -1,10 +1,7 @@
-// @vitest-environment jsdom
-
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
 import WeatherPanel from './WeatherPanel.vue'
-
 
 const weatherData = {
   date: '2026-08-04',

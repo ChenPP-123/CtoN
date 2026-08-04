@@ -5,4 +5,5 @@ export default defineConfig({
   plugins: [vue()],
   envDir: '..',
   server: { proxy: { '/api': 'http://localhost:8000', '/_AMapService': 'http://localhost:8000' } },
+  test: { environment: 'jsdom', clearMocks: true },
 })
