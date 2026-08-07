@@ -29,6 +29,9 @@ def open_database() -> Iterator[sqlite3.Connection]:
     try:
         yield connection
         connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()
 
@@ -111,6 +114,19 @@ def initialize_database() -> None:
                 generated_at TEXT NOT NULL,
                 source_snapshot_json TEXT NOT NULL,
                 UNIQUE(route_id, travel_date)
+            );
+
+            CREATE TABLE IF NOT EXISTS daily_update_runs (
+                run_date TEXT PRIMARY KEY,
+                trigger TEXT NOT NULL CHECK(trigger IN ('scheduled', 'startup')),
+                status TEXT NOT NULL CHECK(status IN ('running', 'succeeded', 'partial', 'failed', 'skipped')),
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                weather_updated_count INTEGER NOT NULL DEFAULT 0,
+                weather_failed_count INTEGER NOT NULL DEFAULT 0,
+                advice_generated_count INTEGER NOT NULL DEFAULT 0,
+                advice_failed_count INTEGER NOT NULL DEFAULT 0,
+                error_summary TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_route_stations_route_order

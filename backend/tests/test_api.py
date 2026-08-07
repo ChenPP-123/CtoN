@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from backend.database import initialize_database, open_database
 from backend.external.deepseek_api import DeepSeekError
 from backend.seed import seed_database
+from backend.time_utils import current_date
 from backend.travel_advice_service import RouteWeatherUnavailableError
 
 
@@ -93,7 +94,7 @@ def test_city_weather_defaults_to_latest_available_observation(client: TestClien
 
 
 def test_city_weather_uses_requested_date(client: TestClient) -> None:
-    requested_date = datetime.now(timezone.utc).date() - timedelta(days=1)
+    requested_date = current_date() - timedelta(days=1)
     with open_database() as connection:
         connection.execute(
             "UPDATE weather_observations SET observation_date = ?",
@@ -109,7 +110,7 @@ def test_city_weather_uses_requested_date(client: TestClient) -> None:
 
 
 def test_weather_date_only_supports_recent_fifteen_days(client: TestClient) -> None:
-    unsupported_date = datetime.now(timezone.utc).date() - timedelta(days=15)
+    unsupported_date = current_date() - timedelta(days=15)
     response = client.get(
         "/api/v1/cities/1/weather", params={"date": unsupported_date.isoformat()}
     )
@@ -172,7 +173,7 @@ def test_route_advice_returns_latest_saved_report(client: TestClient) -> None:
                    route_id, travel_date, content, model_name, prompt_hash, generated_at, source_snapshot_json
                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(route_id, travel_date) DO UPDATE SET content = excluded.content""",
-            (1, date.today().isoformat(), VALID_ADVICE, "test-model", "test-hash", "2026-08-02T08:20:00Z", "[]"),
+            (1, current_date().isoformat(), VALID_ADVICE, "test-model", "test-hash", "2026-08-02T08:20:00Z", "[]"),
         )
     response = client.get("/api/v1/routes/1/travel-advice")
     assert response.status_code == 200
@@ -190,14 +191,31 @@ def test_route_advice_returns_latest_saved_report(client: TestClient) -> None:
 def test_create_travel_advice_exposes_actionable_failures(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, error: Exception, expected_status: int
 ) -> None:
-    def fail_generation(_connection, _route_id):
+    def fail_generation(_route_id):
         raise error
 
-    monkeypatch.setattr("backend.main.generate_travel_advice", fail_generation)
+    monkeypatch.setattr("backend.main.generate_travel_advice_now", fail_generation)
     response = client.post("/api/v1/routes/1/travel-advice")
 
     assert response.status_code == expected_status
     assert response.json()["message"] == str(error)
+
+
+def test_manual_update_returns_business_conflict_when_daily_update_is_running(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def reject_update():
+        from backend.daily_update import UpdateAlreadyRunningError
+
+        raise UpdateAlreadyRunningError("观测更新正在进行，请稍后重试")
+
+    monkeypatch.setattr("backend.main.refresh_weather_now", reject_update)
+
+    response = client.post("/api/v1/weather/refresh")
+
+    assert response.status_code == 409
+    assert response.json()["code"] == 40901
+    assert response.json()["message"] == "观测更新正在进行，请稍后重试"
 
 
 def test_database_migration_adds_station_coordinates(monkeypatch, tmp_path) -> None:

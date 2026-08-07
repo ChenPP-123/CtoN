@@ -4,12 +4,59 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import time
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
 
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+
+@dataclass(frozen=True)
+class DailyUpdateSettings:
+    is_enabled: bool
+    run_time: time
+    timezone: ZoneInfo
+
+
+def get_application_timezone() -> ZoneInfo:
+    timezone_name = os.getenv("APP_TIMEZONE", "Asia/Shanghai")
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as error:
+        raise ValueError(f"APP_TIMEZONE 不是有效时区：{timezone_name}") from error
+
+
+def get_daily_update_settings() -> DailyUpdateSettings:
+    return DailyUpdateSettings(
+        is_enabled=_parse_boolean("DAILY_UPDATE_ENABLED", default=True),
+        run_time=_parse_time(os.getenv("DAILY_UPDATE_TIME", "06:30")),
+        timezone=get_application_timezone(),
+    )
+
+
+def _parse_boolean(name: str, *, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized_value = value.strip().lower()
+    if normalized_value in {"true", "1", "yes"}:
+        return True
+    if normalized_value in {"false", "0", "no"}:
+        return False
+    raise ValueError(f"{name} 只支持 true 或 false")
+
+
+def _parse_time(value: str) -> time:
+    try:
+        hour_text, minute_text = value.strip().split(":")
+        if len(hour_text) != 2 or len(minute_text) != 2:
+            raise ValueError
+        return time(hour=int(hour_text), minute=int(minute_text))
+    except (TypeError, ValueError) as error:
+        raise ValueError("DAILY_UPDATE_TIME 必须使用 HH:MM 格式") from error
 
 
 @dataclass(frozen=True)

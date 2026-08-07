@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import date
 import json
 from random import choice
 import sqlite3
 from typing import Any
 
 from .travel_advice_validation import validate_travel_advice
+from .time_utils import current_date
 
 
 PROFILE_METRICS = {
@@ -66,7 +66,7 @@ def get_weather(
     if not weather:
         return {
             "city": city,
-            "date": observation_date or date.today().isoformat(),
+            "date": observation_date or current_date().isoformat(),
             "observed_at": None,
             "weather": None,
             "air_quality": None,
@@ -213,6 +213,6 @@ def get_latest_travel_advice(connection: sqlite3.Connection, route_id: int) -> d
         report = dict(row)
         if validate_travel_advice(report["content"]) is not None:
             continue
-        report["is_stale"] = report["travel_date"] != date.today().isoformat()
+        report["is_stale"] = report["travel_date"] != current_date().isoformat()
         return report
     return None

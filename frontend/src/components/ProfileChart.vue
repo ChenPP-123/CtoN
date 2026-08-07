@@ -1,6 +1,11 @@
 <script setup>
-import * as echarts from 'echarts'
+import { LineChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent } from 'echarts/components'
+import * as echarts from 'echarts/core'
+import { SVGRenderer } from 'echarts/renderers'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+
+echarts.use([LineChart, GridComponent, TooltipComponent, SVGRenderer])
 
 const props = defineProps({ points: { type: Array, default: () => [] }, selectedCityId: { type: Number, default: 1 }, metric: { type: String, default: 'temperature' }, themeColor: { type: String, default: '#d97847' } })
 const element = ref(null)

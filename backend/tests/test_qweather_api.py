@@ -1,4 +1,4 @@
-import httpx
+import httpx2 as httpx
 
 from backend.config import QWeatherSettings
 from backend.external.qweather_api import QWeatherClient

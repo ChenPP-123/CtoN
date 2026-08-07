@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import date
 import sqlite3
 from typing import Any
 
 from .config import get_qweather_settings
 from .external.qweather_api import QWeatherClient, QWeatherError
 from .stability_service import replace_stability_analysis
+from .time_utils import current_date
 
 
 def refresh_active_route_weather(connection: sqlite3.Connection) -> dict[str, Any]:
@@ -30,7 +30,7 @@ def refresh_active_route_weather(connection: sqlite3.Connection) -> dict[str, An
         except QWeatherError as error:
             results.append({"city_name": city["name"], "status": "failed", "reason": str(error)})
     updated_count = sum(result["status"] == "updated" for result in results)
-    return {"date": date.today().isoformat(), "updated_count": updated_count, "cities": results}
+    return {"date": current_date().isoformat(), "updated_count": updated_count, "cities": results}
 
 
 def _save_snapshot(connection: sqlite3.Connection, city: sqlite3.Row, weather, air_quality) -> None:

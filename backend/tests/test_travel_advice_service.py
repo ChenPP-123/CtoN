@@ -1,5 +1,3 @@
-from datetime import date
-
 import pytest
 
 from backend.database import initialize_database, open_database
@@ -8,6 +6,7 @@ from backend.seed import seed_database
 from backend.services import get_latest_travel_advice
 from backend.travel_advice_service import _generate_valid_advice, generate_travel_advice
 from backend.travel_advice_validation import validate_travel_advice
+from backend.time_utils import current_date
 
 
 VALID_ADVICE = "沿线天气湿热多变，建议穿轻薄透气衣物并及时补水。重庆至恩施段可能有雨，请随身携带雨具。武汉以后注意防晒，空气质量整体适合出行。"
@@ -20,7 +19,7 @@ def test_generate_advice_retries_once_then_saves_report(monkeypatch, tmp_path) -
     initialize_database()
     with open_database() as connection:
         seed_database(connection)
-        connection.execute("UPDATE weather_observations SET observation_date = ?", (date.today().isoformat(),))
+        connection.execute("UPDATE weather_observations SET observation_date = ?", (current_date().isoformat(),))
 
     generated = iter(["太短", VALID_ADVICE])
     prompts = []
@@ -35,7 +34,7 @@ def test_generate_advice_retries_once_then_saves_report(monkeypatch, tmp_path) -
         result = generate_travel_advice(connection, 1)
 
     assert result["content"] == VALID_ADVICE
-    assert result["travel_date"] == date.today().isoformat()
+    assert result["travel_date"] == current_date().isoformat()
     assert result["is_stale"] is False
     assert "上一次草稿：太短" in prompts[1]
     assert "不合格原因：汉字数不足" in prompts[1]
@@ -51,12 +50,12 @@ def test_failed_generation_preserves_last_successful_advice(monkeypatch, tmp_pat
     initialize_database()
     with open_database() as connection:
         seed_database(connection)
-        connection.execute("UPDATE weather_observations SET observation_date = ?", (date.today().isoformat(),))
+        connection.execute("UPDATE weather_observations SET observation_date = ?", (current_date().isoformat(),))
         connection.execute(
             """INSERT INTO travel_reports (
                    route_id, travel_date, content, model_name, prompt_hash, generated_at, source_snapshot_json
                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (1, date.today().isoformat(), VALID_ADVICE, "old-model", "old-hash", "2026-08-01T08:00:00Z", "[]"),
+            (1, current_date().isoformat(), VALID_ADVICE, "old-model", "old-hash", "2026-08-01T08:00:00Z", "[]"),
         )
 
     monkeypatch.setattr("backend.travel_advice_service.DeepSeekClient.generate_text", lambda _client, _prompt: "太短")
@@ -118,7 +117,7 @@ def test_latest_advice_skips_incomplete_history(monkeypatch, tmp_path) -> None:
     initialize_database()
     with open_database() as connection:
         seed_database(connection)
-        connection.execute("UPDATE weather_observations SET observation_date = ?", (date.today().isoformat(),))
+        connection.execute("UPDATE weather_observations SET observation_date = ?", (current_date().isoformat(),))
         connection.execute(
             """INSERT INTO travel_reports (
                    route_id, travel_date, content, model_name, prompt_hash, generated_at, source_snapshot_json
@@ -129,7 +128,7 @@ def test_latest_advice_skips_incomplete_history(monkeypatch, tmp_path) -> None:
             """INSERT INTO travel_reports (
                    route_id, travel_date, content, model_name, prompt_hash, generated_at, source_snapshot_json
                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (1, date.today().isoformat(), "请加强防晒并定时", "invalid-model", "invalid-hash", "2026-08-02T08:00:00Z", "[]"),
+            (1, current_date().isoformat(), "请加强防晒并定时", "invalid-model", "invalid-hash", "2026-08-02T08:00:00Z", "[]"),
         )
         advice = get_latest_travel_advice(connection, 1)
 
@@ -157,7 +156,7 @@ def test_latest_advice_returns_none_when_all_history_is_incomplete(monkeypatch, 
             """INSERT INTO travel_reports (
                    route_id, travel_date, content, model_name, prompt_hash, generated_at, source_snapshot_json
                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (1, date.today().isoformat(), "请加强防晒并定时", "invalid-model", "invalid-hash", "2026-08-02T08:00:00Z", "[]"),
+            (1, current_date().isoformat(), "请加强防晒并定时", "invalid-model", "invalid-hash", "2026-08-02T08:00:00Z", "[]"),
         )
         advice = get_latest_travel_advice(connection, 1)
 

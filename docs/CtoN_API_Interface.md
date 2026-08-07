@@ -62,7 +62,7 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 | 太阳高度角 | ° |
 | 污染物浓度 | µg/m³ |
 
-日期不传时，查询接口默认使用服务器当前 UTC 日期。当前动态数据只保留最近 15 个自然日，超出范围返回 `422`。
+日期不传时，查询接口默认使用 `APP_TIMEZONE` 对应的当前日期，默认时区为 `Asia/Shanghai`。当前动态数据只保留最近 15 个自然日，超出范围返回 `422`。
 
 ## 3. 统一响应格式
 
@@ -315,7 +315,7 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---:|---|---|
-| `date` | string | 否 | 当前 UTC 日期 | `YYYY-MM-DD` |
+| `date` | string | 否 | 当前业务日期 | `YYYY-MM-DD` |
 | `metrics` | string | 否 | 全部 | 逗号分隔：`temperature,humidity,aqi,wind_speed` |
 
 响应 `data`：
@@ -364,7 +364,7 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---:|---|---|
-| `date` | string | 否 | 当前 UTC 日期 | 天气日期 |
+| `date` | string | 否 | 当前业务日期 | 天气日期 |
 
 响应 `data`：
 
@@ -458,7 +458,7 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 用于全线路旅行建议文本生成：
 
 - 后端配置：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`；
-- 天气刷新接口不调用 DeepSeek；前端在天气更新完成后单独请求路线建议；
+- 天气刷新接口本身不调用 DeepSeek；前端手动刷新和后端每日任务均在天气提交后单独生成路线建议；
 - 输入只使用已保存的当天路线天气快照，输出为 50–100 个汉字的单段建议，不合格时重试一次；
 - 生成成功后写入 `travel_reports`，记录模型名、Prompt 哈希、生成时间和来源快照；
 - AI 超时、失败或格式不合格不会影响天气更新，也不会覆盖上一次成功建议；
@@ -498,6 +498,8 @@ AI Prompt 不通过前端传入，避免用户覆盖系统约束或扩大生成�
 - 天气详情和剖面数据可缓存 10 分钟；
 - 预设诗句随静态资源缓存；路线建议按日期保存在数据库中；
 - 后端每日任务更新数据后，前端下次请求自然获得最新快照；
+- 每日任务默认按 `Asia/Shanghai` 时区 06:30 执行；定时点后启动且当天尚无执行记录时补跑；
+- 自动任务失败后保留已有数据并记录执行结果，当天不自动重试；
 - 前端不使用 `raw_payload_json`，也不根据外部 API 返回时间判断新旧。
 
 ### 6.5 幂等和并发
@@ -506,6 +508,7 @@ AI Prompt 不通过前端传入，避免用户覆盖系统约束或扩大生成�
 - `POST /routes/{route_id}/travel-advice` 按 `(route_id, travel_date)` 覆盖当天建议；
 - 后端使用数据库唯一约束防止同一天重复天气快照和报告；
 - 同一报告正在生成时，后续请求应等待已有任务或返回 `40901`，不得并发调用多个 AI 请求。
+- 自动任务运行期间，天气刷新和建议生成的手动 POST 请求返回 `40901`，避免重复调用外部服务。
 
 ### 6.6 安全约定
 
@@ -519,7 +522,10 @@ AI Prompt 不通过前端传入，避免用户覆盖系统约束或扩大生成�
 
 ```text
 APP_ENV=development
-DATABASE_URL=sqlite:///./data/cton.db
+APP_TIMEZONE=Asia/Shanghai
+DATABASE_PATH=./data/cton.db
+DAILY_UPDATE_ENABLED=true
+DAILY_UPDATE_TIME=06:30
 
 QWEATHER_API_KEY=
 QWEATHER_BASE_URL=

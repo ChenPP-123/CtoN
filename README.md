@@ -12,7 +12,19 @@
 cp .env.example .env
 ```
 
-DeepSeek 只需要设置 `DEEPSEEK_API_KEY`。`DEEPSEEK_BASE_URL=https://api.deepseek.com` 与 `DEEPSEEK_MODEL=deepseek-v4-flash` 可保留默认值。完成后重启后端，点击“更新观测”；天气更新完成后，观测台会调用一次模型生成 50–100 个汉字的全线路建议。模型失败不影响天气数据，并会保留上一次成功建议。城市诗句不调用模型。
+DeepSeek 只需要设置 `DEEPSEEK_API_KEY`。`DEEPSEEK_BASE_URL=https://api.deepseek.com` 与 `DEEPSEEK_MODEL=deepseek-v4-flash` 可保留默认值。页面上的“更新观测”会先刷新天气，再调用一次模型生成 50–100 个汉字的全线路建议。模型失败不影响天气数据，并会保留上一次成功建议。城市诗句不调用模型。
+
+## 每日自动更新
+
+后端默认按 `Asia/Shanghai` 时区每天 06:30 自动刷新所有启用线路的天气，天气提交后再为每条线路生成 DeepSeek 建议。后端在当天 06:30 之后启动且当天任务从未执行时会自动补跑；失败会写入 `daily_update_runs` 并保留旧数据，当天不会自动重试，仍可使用页面按钮手动刷新。
+
+```dotenv
+APP_TIMEZONE=Asia/Shanghai
+DAILY_UPDATE_ENABLED=true
+DAILY_UPDATE_TIME=06:30
+```
+
+将 `DAILY_UPDATE_ENABLED` 设为 `false` 可关闭定时和启动补跑，不影响手动刷新。时间必须使用 `HH:MM` 格式；配置错误会阻止后端启动，以免任务在错误时间运行。
 
 地图使用高德地图 JavaScript API 2.0。需要设置三个变量：`VITE_AMAP_JS_KEY` 是浏览器加载 SDK 使用的 Key，必须在高德控制台限制为实际前端域名；`AMAP_SECURITY_JS_CODE` 和用于维护固定站点坐标的 `AMAP_WEB_SERVICE_KEY` 只保存在后端 `.env`。安全密钥通过后端的 `/_AMapService/` 同源代理注入，不会进入 Vue 源码。未配置 JS Key 或地图加载失败时，页面会显示可点击的站点列表，天气功能仍可使用。
 
@@ -46,4 +58,4 @@ cd frontend
 npm run build
 ```
 
-运行后端时会自动在 `data/cton.db` 建表并写入固定种子数据。数据库不纳入版本控制；删除该文件后重启服务可重新初始化。
+运行后端时会自动在 `data/cton.db` 建表并写入固定种子数据。数据库不纳入版本控制；删除该文件后重启服务可重新初始化。生产环境应只启动一个内置调度器；如果多个后端进程共用同一数据库，`daily_update_runs` 的日期唯一键会保证每日任务只有一个进程取得执行权。

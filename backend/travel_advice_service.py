@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 import hashlib
 import json
 import sqlite3
@@ -12,6 +12,7 @@ from .config import get_deepseek_settings
 from .external.deepseek_api import DeepSeekClient, DeepSeekError
 from .services import get_latest_travel_advice
 from .travel_advice_validation import validate_travel_advice
+from .time_utils import current_date
 
 
 class RouteWeatherUnavailableError(RuntimeError):
@@ -23,7 +24,7 @@ def generate_travel_advice(connection: sqlite3.Connection, route_id: int) -> dic
     if not route:
         raise LookupError("路线不存在")
 
-    travel_date = date.today().isoformat()
+    travel_date = current_date().isoformat()
     snapshots = _get_route_snapshots(connection, route_id, travel_date)
     available_snapshots = [snapshot for snapshot in snapshots if snapshot["weather_observation_id"] is not None]
     if not available_snapshots:

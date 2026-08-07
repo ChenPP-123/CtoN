@@ -67,6 +67,18 @@ erDiagram
         TEXT geometry_json
         INTEGER is_active
     }
+    daily_update_runs {
+        TEXT run_date PK
+        TEXT trigger
+        TEXT status
+        TEXT started_at
+        TEXT finished_at
+        INTEGER weather_updated_count
+        INTEGER weather_failed_count
+        INTEGER advice_generated_count
+        INTEGER advice_failed_count
+        TEXT error_summary
+    }
     cities {
         INTEGER id PK
         TEXT name UK
@@ -268,13 +280,30 @@ erDiagram
 
 唯一约束：`(route_id, travel_date)`，同一线路同一天只保留最近一次成功生成的建议。
 
+### 4.8 `daily_update_runs`：每日自动更新记录
+
+| 字段 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `run_date` | `TEXT` | PK | `APP_TIMEZONE` 下的业务日期，同时作为每日任务领取键 |
+| `trigger` | `TEXT` | NOT NULL | `scheduled` 或 `startup` |
+| `status` | `TEXT` | NOT NULL | `running`、`succeeded`、`partial`、`failed` 或 `skipped` |
+| `started_at` | `TEXT` | NOT NULL | UTC 开始时间 |
+| `finished_at` | `TEXT` | NULL | UTC 完成时间 |
+| `weather_updated_count` | `INTEGER` | NOT NULL | 成功更新的城市数 |
+| `weather_failed_count` | `INTEGER` | NOT NULL | 更新失败的城市数 |
+| `advice_generated_count` | `INTEGER` | NOT NULL | 成功生成建议的线路数 |
+| `advice_failed_count` | `INTEGER` | NOT NULL | 建议生成失败的线路数 |
+| `error_summary` | `TEXT` | NULL | 不含密钥和完整外部响应的错误摘要 |
+
+同一日期只允许一条记录。任务开始前先插入 `running` 记录，只有成功取得该日期记录的进程执行外部调用；失败记录也保留，因此当天不会被启动补跑重复调用。
+
 ## 5. 约束与数据一致性
 
 - 删除城市前必须先移除其线路节点和气象数据；生产环境建议禁止删除，改为业务层归档。
 - `air_quality_observations.city_id` 和对应天气记录的 `city_id` 必须相同；SQLAlchemy 写入时由服务层校验。
 - `atmosphere_analyses` 的输入是天气快照，计算规则变化时更新 `calculation_version` 并重新计算。
 - 稳定度为可重新生成的派生数据。风速、云量或带时区的观测时间缺失时，不保留对应分析记录。
-- 外部 API 失败时不覆盖已有有效快照；任务失败应由调度器记录日志并重试。
+- 外部 API 失败时不覆盖已有有效快照；任务失败由调度器记录日志和执行结果，下一自然日再自动尝试。
 - `source_snapshot_json`、`geometry_json` 写入前必须通过 JSON 序列化，读取后必须校验结构。
 - 当前设计只保存每日快照。如果将来需要小时级曲线，应新增小时观测表，不改变每日查询接口的数据含义。
 
@@ -283,7 +312,7 @@ erDiagram
 - `weather_observations`、`air_quality_observations`、`atmosphere_analyses` 和 `travel_reports` 只保留最近 15 个自然日的数据，包含当天，即 `今天` 以及之前 14 天。
 - `routes`、`cities`、`route_stations` 属于线路和城市静态配置，不受此清理策略影响。
 - 每日数据更新成功后执行一次清理任务；清理任务失败不能影响当天数据写入，应记录错误并在下一次调度时重试。
-- 清理以 UTC 日期为准，与文档中日期字段的时间约定保持一致。
+- 清理以 `APP_TIMEZONE` 的业务日期为准，与查询和每日任务保持一致。
 
 空气质量和大气分析随天气快照删除；路线建议按自身日期单独清理：
 
@@ -492,10 +521,10 @@ ORDER BY rs.station_order;
 1. 查询启用线路及其城市节点。
 2. 对每个城市调用天气 API，在一个事务中 UPSERT `weather_observations`。
 3. 使用同一 `weather_observation_id` UPSERT 空气质量和大气分析。
-4. 天气数据提交后，按用户请求调用一次 DeepSeek 生成路线建议；成功后 UPSERT `travel_reports`。
+4. 天气数据提交后，每天 06:30 的自动任务为所有启用线路调用 DeepSeek；手动刷新使用同一执行顺序。
 5. 提交当天数据后执行 15 个自然日之外的动态数据清理。
 
-每个城市的天气相关写入使用独立事务，避免单个 API 失败回滚全部城市；路线建议生成成功后才写入数据库，失败时保留旧建议。
+城市请求失败时继续处理其他城市；天气批次先提交，路线建议再按线路分别提交。路线建议生成成功后才写入数据库，失败时保留旧建议。每日任务通过 `daily_update_runs` 记录总体结果，并区分定时执行与启动补跑。
 
 ## 11. 备份与维护
 

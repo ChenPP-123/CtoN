@@ -6,13 +6,20 @@ import uuid
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import get_amap_settings
+from .daily_update import (
+    UpdateAlreadyRunningError,
+    generate_travel_advice_now,
+    refresh_weather_now,
+    shutdown_daily_update_scheduler,
+    start_daily_update_scheduler,
+)
 from .database import connect, initialize_database, open_database
 from .external.amap_api import AMapError, forward_sdk_request
 from .external.deepseek_api import DeepSeekError
@@ -29,8 +36,8 @@ from .services import (
     get_weather_profile,
     list_routes,
 )
-from .travel_advice_service import RouteWeatherUnavailableError, generate_travel_advice
-from .weather_service import refresh_active_route_weather
+from .time_utils import current_date
+from .travel_advice_service import RouteWeatherUnavailableError
 
 APP_VERSION = "1.0.0"
 WEATHER_HISTORY_DAYS = 15
@@ -41,7 +48,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     initialize_database()
     with open_database() as connection:
         seed_database(connection)
-    yield
+    scheduler = start_daily_update_scheduler()
+    try:
+        yield
+    finally:
+        shutdown_daily_update_scheduler(scheduler)
 
 
 app = FastAPI(title="CtoN API", version=APP_VERSION, lifespan=lifespan)
@@ -66,10 +77,10 @@ def response(data, request: Request) -> ApiResponse:
 
 
 def resolve_weather_date(requested_date: date | None) -> str:
-    current_date = datetime.now(timezone.utc).date()
-    observation_date = requested_date or current_date
-    earliest_date = current_date - timedelta(days=WEATHER_HISTORY_DAYS - 1)
-    if not earliest_date <= observation_date <= current_date:
+    today = current_date()
+    observation_date = requested_date or today
+    earliest_date = today - timedelta(days=WEATHER_HISTORY_DAYS - 1)
+    if not earliest_date <= observation_date <= today:
         raise HTTPException(status_code=422, detail="日期只支持最近 15 个自然日")
     return observation_date.isoformat()
 
@@ -94,6 +105,21 @@ async def handle_http_exception(request: Request, exception: HTTPException) -> J
         data = {"code": 40401, "message": "资源不存在", "data": {}, "request_id": request_id(request)}
         return JSONResponse(status_code=404, content=data)
     return JSONResponse(status_code=exception.status_code, content={"code": exception.status_code * 100, "message": str(exception.detail), "data": {}, "request_id": request_id(request)})
+
+
+@app.exception_handler(UpdateAlreadyRunningError)
+async def handle_update_already_running(
+    request: Request, exception: UpdateAlreadyRunningError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content={
+            "code": 40901,
+            "message": str(exception),
+            "data": {},
+            "request_id": request_id(request),
+        },
+    )
 
 
 @app.get("/api/v1/health")
@@ -194,8 +220,7 @@ def travel_advice(route_id: int, request: Request):
 @app.post("/api/v1/routes/{route_id}/travel-advice")
 def create_travel_advice(route_id: int, request: Request):
     try:
-        with open_database() as connection:
-            advice = generate_travel_advice(connection, route_id)
+        advice = generate_travel_advice_now(route_id)
     except LookupError as error:
         raise HTTPException(status_code=404) from error
     except RouteWeatherUnavailableError as error:
@@ -208,8 +233,7 @@ def create_travel_advice(route_id: int, request: Request):
 @app.post("/api/v1/weather/refresh")
 def refresh_weather(request: Request):
     try:
-        with open_database() as connection:
-            result = refresh_active_route_weather(connection)
+        result = refresh_weather_now()
     except QWeatherError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     return response(result, request)

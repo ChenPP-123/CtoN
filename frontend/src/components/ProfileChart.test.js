@@ -5,12 +5,13 @@ import ProfileChart from './ProfileChart.vue'
 
 const echartsMocks = vi.hoisted(() => ({
   init: vi.fn(),
+  use: vi.fn(),
   setOption: vi.fn(),
   resize: vi.fn(),
   dispose: vi.fn(),
 }))
 
-vi.mock('echarts', () => ({ init: echartsMocks.init }))
+vi.mock('echarts/core', () => ({ init: echartsMocks.init, use: echartsMocks.use }))
 
 const points = Array.from({ length: 8 }, (_, index) => ({
   city_id: index + 1,
