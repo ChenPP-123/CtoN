@@ -1,0 +1,32 @@
+# Locked Python dependencies for the project virtual environment.
+# Regenerate after dependency changes with: python -m pip freeze > requirements.txt
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.14.2
+APScheduler==3.11.3
+astral==3.2
+click==8.4.2
+fastapi==0.141.1
+h11==0.16.0
+httpcore2==2.12.0
+httptools==0.8.0
+httpx2==2.12.0
+idna==3.19
+iniconfig==2.3.0
+packaging==26.3
+pluggy==1.6.0
+pydantic==2.13.4
+pydantic_core==2.46.4
+Pygments==2.21.0
+pytest==8.4.2
+python-dotenv==1.2.3
+PyYAML==6.0.3
+starlette==1.6.0
+truststore==0.10.4
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzlocal==5.4.4
+uvicorn==0.52.3
+uvloop==0.22.1
+watchfiles==1.2.0
+websockets==17.0.1
