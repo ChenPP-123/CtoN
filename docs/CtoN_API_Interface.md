@@ -48,6 +48,22 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 
 `X-Request-ID` 由前端可选传入。未传入时由后端生成，并在响应头中原样返回，用于日志排查。
 
+公网 GET 接口不需要身份凭据。两个管理 POST 必须额外携带：
+
+```http
+Authorization: Bearer <ADMIN_API_TOKEN>
+```
+
+令牌缺失或错误时返回 `401`、业务码 `40100`，并包含 `WWW-Authenticate: Bearer`。开发环境未配置管理员令牌时返回 `503`、业务码 `50300`。前端不得读取或保存该令牌。
+
+内部 Cron GET 使用独立凭据：
+
+```http
+Authorization: Bearer <CRON_SECRET>
+```
+
+`CRON_SECRET` 不得与管理员令牌相同。缺失、未配置或错误时统一返回 `40100` 和 `WWW-Authenticate: Bearer`。
+
 ### 2.3 日期和单位
 
 | 内容 | 格式 |
@@ -123,12 +139,13 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 |---:|---:|---|
 | 400 | `40000` | 请求格式错误 |
 | 400 | `40001` | 参数校验失败 |
+| 401 | `40100` | 管理员凭据缺失或错误 |
 | 404 | `40401` | 资源不存在 |
 | 409 | `40901` | 资源状态冲突 |
 | 422 | `42201` | 日期超出 15 天数据范围 |
 | 429 | `42901` | 请求过于频繁 |
 | 502 | `50201` | 天气/地图/AI 外部服务失败 |
-| 503 | `50301` | 后端服务暂时不可用 |
+| 503 | `50300` | 后端服务暂时不可用或开发环境未配置管理员令牌 |
 | 500 | `50000` | 未预期的服务器错误 |
 
 前端只根据 HTTP 状态码和 `code` 分支处理，不解析 `message`。发生错误时展示可读提示，并保留 `request_id` 便于反馈问题。
@@ -354,6 +371,12 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 `points` 必须按 `station_order` 升序返回。某城市没有数据时，该城市仍可出现在 `points` 中，对应指标为 `null`；`missing_city_ids` 用于前端提示数据缺失。
 传入 `metrics` 时，每个点只返回所选指标对应的数值字段；城市、站序和里程字段始终返回。重复指标会自动去重，空值或未知指标返回 `422`。
 
+### 4.7 管理员刷新天气
+
+#### `POST /weather/refresh`
+
+管理员立即从和风天气刷新所有启用线路的城市观测。请求不需要正文，但必须携带管理员 Bearer Token。接口不调用 DeepSeek，公网前端不调用此接口。已有自动或手动更新正在运行时返回 `40901`，天气服务未配置或不可用时返回 `50300`。
+
 ### 4.8 随机气象旅行
 
 #### `GET /routes/{route_id}/random-trip`
@@ -401,7 +424,7 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 
 #### `POST /routes/{route_id}/travel-advice`
 
-根据当天可用的沿线天气生成并保存一段 50–100 个汉字的路线建议。请求不需要正文；同一天再次成功生成时覆盖当天记录，生成失败时保留原记录。
+管理员根据当天可用的沿线天气生成并保存一段 50–100 个汉字的路线建议。请求不需要正文，但必须携带管理员 Bearer Token；同一天再次成功生成时覆盖当天记录，生成失败时保留原记录。公网前端不调用此接口。
 
 ```json
 {
@@ -420,6 +443,21 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 ```
 
 路线不存在返回 `404`；当天没有任何可用观测返回 `409`；DeepSeek 未配置、超时或输出不合格返回 `503`。
+
+### 4.10 内部每日更新
+
+#### `GET /internal/daily-update`
+
+只供 Vercel Cron 调用，必须携带 `CRON_SECRET` Bearer Token。请求先领取 PostgreSQL 更新租约和当日唯一执行记录，天气更新完成后再生成路线建议。重复触发当天已领取的任务不会重复消耗第三方 API。
+
+| HTTP 状态 | 含义 |
+|---:|---|
+| `200` | 全部成功，或当天已有执行记录而跳过 |
+| `207` | 部分城市或线路成功 |
+| `409` | 另一自动或手动更新持有租约 |
+| `500` | 天气和建议均未成功 |
+
+该接口不在生产 OpenAPI 文档中公开，但 URL 本身不是安全边界，鉴权不可省略。
 
 ## 5. 外部 API 集成约定
 
@@ -458,7 +496,7 @@ X-Request-ID: 7e6c1a4b-4e03-4f69-a5f4-4b8df7a11d20
 用于全线路旅行建议文本生成：
 
 - 后端配置：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`；
-- 天气刷新接口本身不调用 DeepSeek；前端手动刷新和后端每日任务均在天气提交后单独生成路线建议；
+- 天气刷新接口本身不调用 DeepSeek；管理员手动触发建议接口或后端每日任务时才生成路线建议；
 - 输入只使用已保存的当天路线天气快照，输出为 50–100 个汉字的单段建议，不合格时重试一次；
 - 生成成功后写入 `travel_reports`，记录模型名、Prompt 哈希、生成时间和来源快照；
 - AI 超时、失败或格式不合格不会影响天气更新，也不会覆盖上一次成功建议；
@@ -498,7 +536,8 @@ AI Prompt 不通过前端传入，避免用户覆盖系统约束或扩大生成�
 - 天气详情和剖面数据可缓存 10 分钟；
 - 预设诗句随静态资源缓存；路线建议按日期保存在数据库中；
 - 后端每日任务更新数据后，前端下次请求自然获得最新快照；
-- 每日任务默认按 `Asia/Shanghai` 时区 06:30 执行；定时点后启动且当天尚无执行记录时补跑；
+- 前端“刷新数据”并行调用天气、剖面和建议三个 GET，不触发任何外部 API 消耗；
+- Vercel Cron 每天 UTC 22:00 触发；Hobby 在北京时间 06:00–06:59 的窗口内启动，不保证精确分钟；
 - 自动任务失败后保留已有数据并记录执行结果，当天不自动重试；
 - 前端不使用 `raw_payload_json`，也不根据外部 API 返回时间判断新旧。
 
@@ -507,14 +546,15 @@ AI Prompt 不通过前端传入，避免用户覆盖系统约束或扩大生成�
 - 所有 GET 请求必须是幂等的；
 - `POST /routes/{route_id}/travel-advice` 按 `(route_id, travel_date)` 覆盖当天建议；
 - 后端使用数据库唯一约束防止同一天重复天气快照和报告；
-- 同一报告正在生成时，后续请求应等待已有任务或返回 `40901`，不得并发调用多个 AI 请求。
-- 自动任务运行期间，天气刷新和建议生成的手动 POST 请求返回 `40901`，避免重复调用外部服务。
+- Cron、天气刷新和建议生成共用 PostgreSQL 过期租约；未取得租约时返回 `40901`，不得并发调用第三方服务；
+- `daily_update_runs.run_date` 唯一，保证重复 Cron 请求不会重复调用第三方服务。
 
 ### 6.6 安全约定
 
 - API Key、数据库连接信息和模型配置通过环境变量注入；
+- 两个管理 POST 统一使用 `Authorization: Bearer <ADMIN_API_TOKEN>`，只供管理员使用；
 - 不在响应中返回外部服务 Key、原始授权头或完整外部响应；
-- 生产环境配置 CORS 白名单，只允许 CtoN 前端域名；
+- 生产流量使用前端同源 rewrite 时 CORS 可为空；若配置则只接受 HTTPS 正式域名，并关闭交互文档和 OpenAPI JSON；
 - 对 `route_id`、`city_id` 和日期参数使用 FastAPI/Pydantic 校验；
 - 对路线建议请求进行限流，避免重复触发外部 AI 调用。
 
@@ -523,22 +563,26 @@ AI Prompt 不通过前端传入，避免用户覆盖系统约束或扩大生成�
 ```text
 APP_ENV=development
 APP_TIMEZONE=Asia/Shanghai
-DATABASE_PATH=./data/cton.db
-DAILY_UPDATE_ENABLED=true
-DAILY_UPDATE_TIME=06:30
+DATABASE_URL=postgresql://localhost/cton
+DATABASE_MIGRATION_URL=postgresql://localhost/cton
+TEST_DATABASE_URL=postgresql://localhost/cton_test
+ADMIN_API_TOKEN=
+CRON_SECRET=
+CORS_ORIGINS=http://localhost:5173
 
 QWEATHER_API_KEY=
 QWEATHER_BASE_URL=
 
 AMAP_WEB_SERVICE_KEY=
 AMAP_SECURITY_JS_CODE=
-VITE_AMAP_JS_KEY=
 AMAP_BASE_URL=https://restapi.amap.com
 
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_MODEL=deepseek-v4-flash
 ```
+
+前端 Project 单独配置 `BACKEND_ORIGIN` 与 `VITE_AMAP_JS_KEY`。`DATABASE_MIGRATION_URL` 只在本地初始化时使用，不保存到 Vercel Function 环境。
 
 ## 8. 接口实现建议
 

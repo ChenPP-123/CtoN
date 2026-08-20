@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-import sqlite3
 
 from astral import Observer
 from astral.sun import elevation, sun
+
+from .database import DatabaseConnection
 
 
 CALCULATION_VERSION = "pasquill-v1"
@@ -139,7 +140,7 @@ def estimate_pasquill_stability(
 
 
 def replace_stability_analysis(
-    connection: sqlite3.Connection,
+    connection: DatabaseConnection,
     *,
     weather_observation_id: int,
     city_id: int,
@@ -150,7 +151,7 @@ def replace_stability_analysis(
     cloud_cover_percent: int | None,
 ) -> StabilityAnalysis | None:
     connection.execute(
-        "DELETE FROM atmosphere_analyses WHERE weather_observation_id = ?",
+        "DELETE FROM atmosphere_analyses WHERE weather_observation_id = %s",
         (weather_observation_id,),
     )
     analysis = estimate_pasquill_stability(
@@ -168,7 +169,7 @@ def replace_stability_analysis(
                weather_observation_id, city_id, stability_class, stability_level, period,
                wind_speed_ms, cloud_cover_percent, solar_elevation_deg, insolation_category,
                confidence, method, explanation, calculation_version
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         (
             weather_observation_id,
             city_id,

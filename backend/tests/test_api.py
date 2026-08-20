@@ -3,9 +3,8 @@ from datetime import timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.database import initialize_database, open_database
+from backend.database import open_database
 from backend.external.deepseek_api import DeepSeekError
-from backend.seed import seed_database
 from backend.time_utils import current_date
 from backend.travel_advice_service import RouteWeatherUnavailableError
 
@@ -97,7 +96,7 @@ def test_city_weather_uses_requested_date(client: TestClient) -> None:
     requested_date = current_date() - timedelta(days=1)
     with open_database() as connection:
         connection.execute(
-            "UPDATE weather_observations SET observation_date = ?",
+            "UPDATE weather_observations SET observation_date = %s",
             (requested_date.isoformat(),),
         )
     response = client.get(
@@ -171,7 +170,7 @@ def test_route_advice_returns_latest_saved_report(client: TestClient) -> None:
         connection.execute(
             """INSERT INTO travel_reports (
                    route_id, travel_date, content, model_name, prompt_hash, generated_at, source_snapshot_json
-               ) VALUES (?, ?, ?, ?, ?, ?, ?)
+               ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT(route_id, travel_date) DO UPDATE SET content = excluded.content""",
             (1, current_date().isoformat(), VALID_ADVICE, "test-model", "test-hash", "2026-08-02T08:20:00Z", "[]"),
         )
@@ -189,20 +188,26 @@ def test_route_advice_returns_latest_saved_report(client: TestClient) -> None:
     ],
 )
 def test_create_travel_advice_exposes_actionable_failures(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, error: Exception, expected_status: int
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    admin_headers: dict[str, str],
+    error: Exception,
+    expected_status: int,
 ) -> None:
     def fail_generation(_route_id):
         raise error
 
     monkeypatch.setattr("backend.main.generate_travel_advice_now", fail_generation)
-    response = client.post("/api/v1/routes/1/travel-advice")
+    response = client.post("/api/v1/routes/1/travel-advice", headers=admin_headers)
 
     assert response.status_code == expected_status
     assert response.json()["message"] == str(error)
 
 
 def test_manual_update_returns_business_conflict_when_daily_update_is_running(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    admin_headers: dict[str, str],
 ) -> None:
     def reject_update():
         from backend.daily_update import UpdateAlreadyRunningError
@@ -211,58 +216,103 @@ def test_manual_update_returns_business_conflict_when_daily_update_is_running(
 
     monkeypatch.setattr("backend.main.refresh_weather_now", reject_update)
 
-    response = client.post("/api/v1/weather/refresh")
+    response = client.post("/api/v1/weather/refresh", headers=admin_headers)
 
     assert response.status_code == 409
     assert response.json()["code"] == 40901
     assert response.json()["message"] == "观测更新正在进行，请稍后重试"
 
 
-def test_database_migration_adds_station_coordinates(monkeypatch, tmp_path) -> None:
-    database_path = tmp_path / "legacy.db"
-    monkeypatch.setenv("DATABASE_PATH", str(database_path))
-    import sqlite3
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/weather/refresh",
+        "/api/v1/routes/1/travel-advice",
+    ],
+)
+def test_admin_endpoints_require_bearer_token(client: TestClient, path: str) -> None:
+    for headers in ({}, {"Authorization": "Bearer incorrect-token"}):
+        response = client.post(path, headers=headers)
 
-    connection = sqlite3.connect(database_path)
-    connection.execute(
-        """CREATE TABLE route_stations (
-            id INTEGER PRIMARY KEY, route_id INTEGER NOT NULL, city_id INTEGER NOT NULL,
-            station_order INTEGER NOT NULL, distance_from_origin_km REAL NOT NULL,
-            station_name TEXT NOT NULL, UNIQUE(route_id, city_id), UNIQUE(route_id, station_order)
-        )"""
+        assert response.status_code == 401
+        assert response.json()["code"] == 40100
+        assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+def test_admin_endpoint_is_unavailable_without_configured_token(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ADMIN_API_TOKEN")
+
+    response = client.post("/api/v1/weather/refresh")
+
+    assert response.status_code == 503
+    assert response.json()["code"] == 50300
+
+
+def test_admin_token_preserves_successful_manual_update(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    admin_headers: dict[str, str],
+) -> None:
+    monkeypatch.setattr(
+        "backend.main.refresh_weather_now", lambda: {"updated_count": 8}
     )
-    connection.commit()
-    connection.close()
 
-    initialize_database()
-    with open_database() as connection:
-        seed_database(connection)
-        station = connection.execute("SELECT longitude, latitude FROM route_stations WHERE route_id = 1 AND city_id = 1").fetchone()
-    assert station["longitude"] is not None
-    assert station["latitude"] is not None
+    response = client.post("/api/v1/weather/refresh", headers=admin_headers)
+
+    assert response.status_code == 200
+    assert response.json()["data"] == {"updated_count": 8}
 
 
-def test_database_migration_replaces_obsolete_atmosphere_schema(monkeypatch, tmp_path) -> None:
-    database_path = tmp_path / "legacy-atmosphere.db"
-    monkeypatch.setenv("DATABASE_PATH", str(database_path))
-    import sqlite3
-
-    connection = sqlite3.connect(database_path)
-    connection.execute(
-        """CREATE TABLE atmosphere_analyses (
-               id INTEGER PRIMARY KEY, weather_observation_id INTEGER NOT NULL,
-               city_id INTEGER NOT NULL, stability_level TEXT NOT NULL,
-               lapse_rate_c_per_km REAL NOT NULL, pressure_hpa REAL,
-               explanation TEXT NOT NULL, calculation_version TEXT NOT NULL
-           )"""
+def test_admin_token_preserves_successful_advice_generation(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    admin_headers: dict[str, str],
+) -> None:
+    generated_advice = {"route_id": 1, "content": VALID_ADVICE}
+    monkeypatch.setattr(
+        "backend.main.generate_travel_advice_now", lambda _route_id: generated_advice
     )
-    connection.commit()
-    connection.close()
 
-    initialize_database()
+    response = client.post(
+        "/api/v1/routes/1/travel-advice", headers=admin_headers
+    )
 
-    with open_database() as connection:
-        columns = {row["name"] for row in connection.execute("PRAGMA table_info(atmosphere_analyses)")}
-    assert "stability_class" in columns
-    assert "solar_elevation_deg" in columns
-    assert "lapse_rate_c_per_km" not in columns
+    assert response.status_code == 200
+    assert response.json()["data"] == generated_advice
+
+
+@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer incorrect"}])
+def test_cron_endpoint_requires_its_own_bearer_secret(
+    client: TestClient, headers: dict[str, str]
+) -> None:
+    cron_response = client.get("/api/v1/internal/daily-update", headers=headers)
+
+    assert cron_response.status_code == 401
+    assert cron_response.json()["code"] == 40100
+    assert cron_response.headers["WWW-Authenticate"] == "Bearer"
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_status_code"),
+    [("succeeded", 200), ("skipped", 200), ("partial", 207), ("failed", 500)],
+)
+def test_cron_endpoint_maps_update_status(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    cron_headers: dict[str, str],
+    status: str,
+    expected_status_code: int,
+) -> None:
+    monkeypatch.setattr(
+        "backend.main.run_daily_update",
+        lambda: {"run_date": "2026-08-07", "status": status},
+    )
+
+    cron_response = client.get(
+        "/api/v1/internal/daily-update", headers=cron_headers
+    )
+
+    assert cron_response.status_code == expected_status_code
+    assert cron_response.json()["data"]["status"] == status

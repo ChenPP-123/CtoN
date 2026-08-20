@@ -1,10 +1,10 @@
-"""Repeatable fixed route and offline observations used by the demonstration."""
+"""Repeatable fixed route configuration and optional local demo observations."""
 
 from __future__ import annotations
 
 import json
-import sqlite3
 
+from .database import DatabaseConnection
 from .stability_service import replace_stability_analysis
 
 
@@ -26,39 +26,46 @@ STATIONS = [
 ROUTE_GEOMETRY = [[station[9], station[10]] for station in STATIONS]
 
 
-def seed_database(connection: sqlite3.Connection) -> None:
+def seed_database(connection: DatabaseConnection) -> None:
+    """Insert or update fixed route configuration without touching observations."""
     connection.execute(
         """INSERT INTO routes (id, code, name, origin_city_name, destination_city_name, total_distance_km, geometry_json, is_active)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT(id) DO UPDATE SET
              code = excluded.code, name = excluded.name,
              origin_city_name = excluded.origin_city_name, destination_city_name = excluded.destination_city_name,
              total_distance_km = excluded.total_distance_km, geometry_json = excluded.geometry_json,
              is_active = excluded.is_active""",
-        (1, "CTN", "重庆至南京高铁沿线", "重庆", "南京", 1245, json.dumps(ROUTE_GEOMETRY), 1),
+        (1, "CTN", "重庆至南京高铁沿线", "重庆", "南京", 1245, json.dumps(ROUTE_GEOMETRY), True),
     )
     # Route stations are static configuration with no dependents, so replacing
     # this route's rows avoids transient unique-order conflicts during upgrades.
-    connection.execute("DELETE FROM route_stations WHERE route_id = ?", (1,))
+    connection.execute("DELETE FROM route_stations WHERE route_id = %s", (1,))
     city_ids: dict[str, int] = {}
-    for _, name, city_code, province, longitude, latitude, station_name, station_order, distance, station_longitude, station_latitude in STATIONS:
+    for city_id, name, city_code, province, longitude, latitude, station_name, station_order, distance, station_longitude, station_latitude in STATIONS:
         connection.execute(
-            """INSERT INTO cities (name, city_code, province, longitude, latitude, description, climate_description)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(city_code) DO UPDATE SET
+            """INSERT INTO cities (id, name, city_code, province, longitude, latitude, description, climate_description)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT(id) DO UPDATE SET
                  name = excluded.name, province = excluded.province,
-                 longitude = excluded.longitude, latitude = excluded.latitude""",
-            (name, city_code, province, longitude, latitude, *_city_copy(name)),
+                 city_code = excluded.city_code, longitude = excluded.longitude,
+                 latitude = excluded.latitude, description = excluded.description,
+                 climate_description = excluded.climate_description""",
+            (city_id, name, city_code, province, longitude, latitude, *_city_copy(name)),
         )
-        city_id = connection.execute("SELECT id FROM cities WHERE city_code = ?", (city_code,)).fetchone()["id"]
         city_ids[city_code] = city_id
         connection.execute(
             """INSERT INTO route_stations (
                    route_id, city_id, station_order, distance_from_origin_km, station_name, longitude, latitude
-               ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               ) VALUES (%s, %s, %s, %s, %s, %s, %s)""",
             (1, city_id, station_order, distance, station_name, station_longitude, station_latitude),
         )
-    _seed_observations(connection, city_ids)
+    connection.execute(
+        "SELECT setval(pg_get_serial_sequence('routes', 'id'), (SELECT MAX(id) FROM routes), true)"
+    )
+    connection.execute(
+        "SELECT setval(pg_get_serial_sequence('cities', 'id'), (SELECT MAX(id) FROM cities), true)"
+    )
 
 
 def _city_copy(name: str) -> tuple[str, str]:
@@ -68,7 +75,12 @@ def _city_copy(name: str) -> tuple[str, str]:
     )
 
 
-def _seed_observations(connection: sqlite3.Connection, city_ids: dict[str, int]) -> None:
+def seed_demo_observations(connection: DatabaseConnection) -> None:
+    """Insert repeatable offline observations for tests and local demos only."""
+    city_ids = {
+        row["city_code"]: row["id"]
+        for row in connection.execute("SELECT id, city_code FROM cities")
+    }
     weather_rows = [
         ("101040100", 29.4, 33.1, "多云", 104, 78, 2.1, "东南风", 35, 8.0, 70, 62, 38, 61, "PM2.5"),
         ("101041300", 28.6, 32.4, "阴", 103, 82, 1.7, "东风", 40, 7.0, 92, 55, 29, 48, "PM2.5"),
@@ -86,7 +98,7 @@ def _seed_observations(connection: sqlite3.Connection, city_ids: dict[str, int])
                    city_id, observation_date, observed_at, temperature_c, feels_like_c, weather_text,
                    weather_code, humidity_percent, wind_speed_ms, wind_direction,
                    precipitation_probability_percent, visibility_km, cloud_cover_percent, source
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT(city_id, observation_date) DO UPDATE SET
                  observed_at = excluded.observed_at, temperature_c = excluded.temperature_c,
                  feels_like_c = excluded.feels_like_c, weather_text = excluded.weather_text,
@@ -98,19 +110,19 @@ def _seed_observations(connection: sqlite3.Connection, city_ids: dict[str, int])
             (city_id, DEMO_DATE, OBSERVED_AT, temperature, feels_like, text, code, humidity, wind_speed, wind_direction, precipitation, visibility, cloud_cover, "local-demo"),
         )
         observation = connection.execute(
-            "SELECT id FROM weather_observations WHERE city_id = ? AND observation_date = ?", (city_id, DEMO_DATE)
+            "SELECT id FROM weather_observations WHERE city_id = %s AND observation_date = %s", (city_id, DEMO_DATE)
         ).fetchone()
         connection.execute(
             """INSERT INTO air_quality_observations (
                    weather_observation_id, city_id, aqi, pm25_ug_m3, pm10_ug_m3, primary_pollutant
-               ) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(weather_observation_id) DO UPDATE SET
+               ) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT(weather_observation_id) DO UPDATE SET
                  city_id = excluded.city_id, aqi = excluded.aqi, pm25_ug_m3 = excluded.pm25_ug_m3,
                  pm10_ug_m3 = excluded.pm10_ug_m3, primary_pollutant = excluded.primary_pollutant
                WHERE (SELECT source FROM weather_observations WHERE id = air_quality_observations.weather_observation_id) = 'local-demo'""",
             (observation["id"], city_id, aqi, pm25, pm10, pollutant),
         )
         city = connection.execute(
-            "SELECT latitude, longitude FROM cities WHERE id = ?", (city_id,)
+            "SELECT latitude, longitude FROM cities WHERE id = %s", (city_id,)
         ).fetchone()
         replace_stability_analysis(
             connection,

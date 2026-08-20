@@ -16,7 +16,6 @@ const autoplayEnabled = ref(true)
 const activeMetric = ref('temperature')
 const loading = ref(true)
 const refreshing = ref(false)
-const refreshStage = ref('')
 const adviceRefreshing = ref(false)
 const adviceError = ref('')
 const traveling = ref(false)
@@ -28,7 +27,7 @@ const metrics = [['temperature', '温度'], ['humidity', '湿度'], ['aqi', 'AQI
 const selectedCity = computed(() => route.value?.stations.find((station) => station.city_id === selectedCityId.value))
 const visual = computed(() => visualForCity(selectedCity.value?.city_name, weather.value?.weather?.text, weather.value?.date))
 const themeStyle = computed(() => ({ '--theme-primary': visual.value.primary, '--theme-accent': visual.value.accent, '--hero-overlay': visual.value.overlay, '--hero-fallback': visual.value.gradient }))
-const refreshLabel = computed(() => refreshStage.value === 'weather' ? '更新天气…' : refreshStage.value === 'advice' ? '生成建议…' : '更新观测')
+const refreshLabel = computed(() => refreshing.value ? '刷新中…' : '刷新数据')
 let departureTimer
 let arrivalTimer
 let weatherRequestId = 0
@@ -123,30 +122,28 @@ async function load() {
 async function refresh() {
   clearRoutePlayback()
   refreshing.value = true
-  refreshStage.value = 'weather'
+  adviceRefreshing.value = true
   error.value = ''
   adviceError.value = ''
   try {
-    await api.refreshWeather()
     const refreshCityId = selectedCityId.value
     const requestId = ++weatherRequestId
-    const [profileData, weatherData] = await Promise.all([api.getProfile(1), api.getWeather(refreshCityId)])
+    const [profileData, weatherData, adviceResult] = await Promise.all([
+      api.getProfile(1),
+      api.getWeather(refreshCityId),
+      api.getTravelAdvice(1)
+        .then((data) => ({ data, error: '' }))
+        .catch((exception) => ({ data: null, error: exception.message })),
+    ])
     profile.value = profileData
     if (requestId === weatherRequestId && selectedCityId.value === refreshCityId) weather.value = weatherData
-    refreshStage.value = 'advice'
-    adviceRefreshing.value = true
-    try {
-      travelAdvice.value = await api.generateTravelAdvice(1)
-    } catch (exception) {
-      adviceError.value = exception.message
-    } finally {
-      adviceRefreshing.value = false
-    }
+    if (adviceResult.data) travelAdvice.value = adviceResult.data
+    adviceError.value = adviceResult.error
   } catch (exception) {
     error.value = exception.message
   } finally {
+    adviceRefreshing.value = false
     refreshing.value = false
-    refreshStage.value = ''
     scheduleRoutePlayback()
   }
 }
@@ -218,9 +215,9 @@ onBeforeUnmount(() => {
                 <small v-else-if="travelAdvice">{{ travelAdvice.is_stale ? `上次建议 · ${travelAdvice.travel_date}` : travelAdvice.travel_date }}</small>
               </div>
               <p v-if="travelAdvice">{{ travelAdvice.content }}</p>
-              <p v-else-if="adviceRefreshing">正在结合沿线观测生成建议…</p>
-              <p v-else>更新观测后生成今日路线建议。</p>
-              <small v-if="adviceError" class="advice-error">本次建议更新失败：{{ adviceError }}</small>
+              <p v-else-if="adviceRefreshing">正在读取最新路线建议…</p>
+              <p v-else>等待后台每日更新生成路线建议。</p>
+              <small v-if="adviceError" class="advice-error">本次建议读取失败：{{ adviceError }}</small>
             </aside>
             <div class="profile-heading"><div><p class="eyebrow">ROUTE OBSERVATORY</p><h2>沿线观测剖面</h2></div><p>从重庆北站起算的真实距离</p></div>
             <div class="metric-tabs" role="tablist" aria-label="观测指标"><button v-for="[key, label] in metrics" :key="key" :class="{ active: activeMetric === key }" role="tab" :aria-selected="activeMetric === key" @click="activeMetric = key">{{ label }}</button></div>

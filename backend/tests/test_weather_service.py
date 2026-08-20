@@ -1,15 +1,10 @@
-import sqlite3
 from types import SimpleNamespace
 
-from backend.database import initialize_database, open_database
-from backend.seed import seed_database
+from backend.database import open_database
 from backend.weather_service import _save_snapshot, refresh_active_route_weather
 
 
-def test_refresh_updates_weather_without_waiting_for_ai(monkeypatch, tmp_path) -> None:
-    database_path = tmp_path / "cton.db"
-    monkeypatch.setenv("DATABASE_PATH", str(database_path))
-    initialize_database()
+def test_refresh_updates_weather_without_waiting_for_ai(monkeypatch) -> None:
     events: list[str] = []
 
     class FakeWeatherClient:
@@ -27,13 +22,8 @@ def test_refresh_updates_weather_without_waiting_for_ai(monkeypatch, tmp_path) -
     monkeypatch.setattr("backend.weather_service.QWeatherClient", FakeWeatherClient)
     monkeypatch.setattr("backend.weather_service._save_snapshot", lambda _connection, city, _weather, _air: events.append(f"save:{city['id']}"))
 
-    connection = sqlite3.connect(database_path)
-    connection.row_factory = sqlite3.Row
-    try:
-        seed_database(connection)
+    with open_database() as connection:
         result = refresh_active_route_weather(connection)
-    finally:
-        connection.close()
 
     assert result["updated_count"] == 8
     assert len(result["cities"]) == 8
@@ -41,9 +31,7 @@ def test_refresh_updates_weather_without_waiting_for_ai(monkeypatch, tmp_path) -
     assert len([event for event in events if event.startswith("save:")]) == 8
 
 
-def test_snapshot_replaces_stability_and_removes_it_when_cloud_is_missing(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "cton.db"))
-    initialize_database()
+def test_snapshot_replaces_stability_and_removes_it_when_cloud_is_missing(monkeypatch) -> None:
     weather = SimpleNamespace(
         observed_at="2026-08-04T12:00:00+08:00",
         temperature_c=31.0,
@@ -59,10 +47,11 @@ def test_snapshot_replaces_stability_and_removes_it_when_cloud_is_missing(monkey
     air_quality = SimpleNamespace(aqi=48, pm25_ug_m3=24.0, pm10_ug_m3=45.0, primary_pollutant=None)
 
     with open_database() as connection:
-        seed_database(connection)
         city = connection.execute("SELECT * FROM cities WHERE id = 1").fetchone()
         _save_snapshot(connection, city, weather, air_quality)
-        analysis_count = connection.execute("SELECT COUNT(*) FROM atmosphere_analyses WHERE city_id = 1").fetchone()[0]
+        analysis_count = connection.execute(
+            "SELECT COUNT(*) AS analysis_count FROM atmosphere_analyses WHERE city_id = 1"
+        ).fetchone()["analysis_count"]
         assert analysis_count == 2
 
         weather.cloud_cover_percent = None

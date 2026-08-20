@@ -1,61 +1,109 @@
 # CtoN
 
-重庆至南京高铁沿线的气象可视化演示。天气可从和风天气刷新；城市诗句随天气图片从前端预设中即时选择，配置 DeepSeek 后可根据当天整条线路的观测生成旅途建议。
+重庆至南京高铁沿线的气象可视化网站。前端展示地图、城市天气、沿线剖面、随机旅途和预设诗句；后端从和风天气更新观测，并使用 DeepSeek 生成全线路旅途建议。
 
-城市观测台会根据实时风速、云量、观测时间和城市位置，以帕斯奎尔方法估算近地层稳定度。太阳位置在本地计算，不额外调用太阳辐射接口；由于和风天气不提供云底高度和风速观测高度，该结果仅用于教学展示，不用于科研或监管判定。
+## 生产架构
 
-## 外部 API 配置
+同一仓库部署为两个 Vercel Project：
 
-从 `.env.example` 复制出未纳入版本控制的 `.env`，再填入实际凭据。前端不会读取这些变量。
+- 后端 Project 的 Root Directory 为仓库根目录。FastAPI 作为单个 Python 3.13 Function 运行在新加坡 `sin1`，数据保存在 Neon PostgreSQL 新加坡区。
+- 前端 Project 的 Root Directory 为 `frontend`。浏览器只请求相对路径 `/api/v1` 和 `/_AMapService`，Vercel 将它们同源转发到后端 Project。
+
+后端不在冷启动时建表、写种子或启动后台线程。Vercel Cron 每天 UTC 22:00 触发内部更新接口，即北京时间 06:00–06:59 的 Hobby 执行窗口；Hobby 不保证精确到某一分钟。天气先更新，随后按线路生成建议，结果写入 `daily_update_runs`。
+
+## 配置
+
+后端从仓库根目录 `.env` 读取本地配置；前端只从 `frontend/.env` 读取构建配置。分别复制示例：
 
 ```bash
 cp .env.example .env
+cp frontend/.env.example frontend/.env
 ```
 
-DeepSeek 只需要设置 `DEEPSEEK_API_KEY`。`DEEPSEEK_BASE_URL=https://api.deepseek.com` 与 `DEEPSEEK_MODEL=deepseek-v4-flash` 可保留默认值。页面上的“更新观测”会先刷新天气，再调用一次模型生成 50–100 个汉字的全线路建议。模型失败不影响天气数据，并会保留上一次成功建议。城市诗句不调用模型。
-
-## 每日自动更新
-
-后端默认按 `Asia/Shanghai` 时区每天 06:30 自动刷新所有启用线路的天气，天气提交后再为每条线路生成 DeepSeek 建议。后端在当天 06:30 之后启动且当天任务从未执行时会自动补跑；失败会写入 `daily_update_runs` 并保留旧数据，当天不会自动重试，仍可使用页面按钮手动刷新。
+生产运行时必须配置：
 
 ```dotenv
+APP_ENV=production
 APP_TIMEZONE=Asia/Shanghai
-DAILY_UPDATE_ENABLED=true
-DAILY_UPDATE_TIME=06:30
+DATABASE_URL=postgresql://...-pooler.../cton?sslmode=require
+ADMIN_API_TOKEN=
+CRON_SECRET=
+CORS_ORIGINS=
+QWEATHER_API_KEY=
+QWEATHER_BASE_URL=
+DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+AMAP_SECURITY_JS_CODE=
 ```
 
-将 `DAILY_UPDATE_ENABLED` 设为 `false` 可关闭定时和启动补跑，不影响手动刷新。时间必须使用 `HH:MM` 格式；配置错误会阻止后端启动，以免任务在错误时间运行。
+前端生产变量：
 
-地图使用高德地图 JavaScript API 2.0。需要设置三个变量：`VITE_AMAP_JS_KEY` 是浏览器加载 SDK 使用的 Key，必须在高德控制台限制为实际前端域名；`AMAP_SECURITY_JS_CODE` 和用于维护固定站点坐标的 `AMAP_WEB_SERVICE_KEY` 只保存在后端 `.env`。安全密钥通过后端的 `/_AMapService/` 同源代理注入，不会进入 Vue 源码。未配置 JS Key 或地图加载失败时，页面会显示可点击的站点列表，天气功能仍可使用。
+```dotenv
+BACKEND_ORIGIN=https://your-backend-project.vercel.app
+VITE_AMAP_JS_KEY=
+```
+
+`ADMIN_API_TOKEN` 和 `CRON_SECRET` 必须互不相同且至少 32 个字符。生产流量经同源 rewrite 时 `CORS_ORIGINS` 可为空；若配置，只接受 HTTPS 正式域名。`DATABASE_MIGRATION_URL` 仅供本地初始化使用，不应保存到 Vercel Function 环境。`AMAP_WEB_SERVICE_KEY` 仅为可选维护配置。
+
+## 数据库初始化
+
+先用 Neon 非池化直连地址显式建表并写入固定线路配置：
+
+```bash
+source .venv/bin/activate
+DATABASE_MIGRATION_URL='postgresql://...' python -m backend.database
+```
+
+命令可重复执行，只更新固定线路、城市和站点配置，不覆盖真实天气或旅行建议。当前没有 SQLite 生产数据迁移路径；旧本地数据库直接废弃。
 
 ## 本地运行
 
-终端一：启动后端（首次需要安装依赖）。
+准备 PostgreSQL 17、Python 3.13 和 Node.js 22，然后：
 
 ```bash
 source .venv/bin/activate
-pip install -r backend/requirements.txt
+pip install -r requirements.txt
+python -m backend.database
 uvicorn backend.main:app --reload
 ```
 
-终端二：启动前端。
+另一个终端启动前端：
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-打开 Vite 显示的本地地址（通常是 `http://localhost:5173`）。前端开发服务器会把 `/api` 和 `/_AMapService` 请求代理给 `http://localhost:8000`。生产环境的反向代理也必须将这两个路径转发到 FastAPI，且将生产域名加入高德 JS Key 的白名单。
+Vite 会将 `/api` 和 `/_AMapService` 代理到 `http://localhost:8000`。地图 JS Key 必须限制允许域名；高德安全密钥只保存在后端并由代理注入。
+
+## 管理接口
+
+公网前端只调用 GET。管理员可从可信终端手动触发：
+
+```bash
+curl -X POST https://backend.example/api/v1/weather/refresh \
+  -H "Authorization: Bearer ${ADMIN_API_TOKEN}"
+curl -X POST https://backend.example/api/v1/routes/1/travel-advice \
+  -H "Authorization: Bearer ${ADMIN_API_TOKEN}"
+```
+
+Cron 使用独立的 `GET /api/v1/internal/daily-update` 和 `CRON_SECRET`。所有第三方更新共用 PostgreSQL 过期租约；并发手动更新返回业务码 `40901`，函数异常退出后租约会自动过期。
 
 ## 验证
 
+测试数据库名必须以 `_test` 结尾：
+
 ```bash
 source .venv/bin/activate
-pytest backend/tests
+TEST_DATABASE_URL=postgresql:///cton_test pytest -q
+pip check
 
 cd frontend
-npm run build
+npm test
+BACKEND_ORIGIN=https://backend.example npm run build
+npm audit --omit=dev --audit-level=high
 ```
 
-运行后端时会自动在 `data/cton.db` 建表并写入固定种子数据。数据库不纳入版本控制；删除该文件后重启服务可重新初始化。生产环境应只启动一个内置调度器；如果多个后端进程共用同一数据库，`daily_update_runs` 的日期唯一键会保证每日任务只有一个进程取得执行权。
+完整部署、恢复演练和上线验收见 [Vercel 部署手册](docs/Production_Deployment.md)。生产恢复依赖 Neon 当前套餐提供的恢复窗口，不再使用 ECS、Nginx、systemd、SQLite 备份或阿里云 OSS。

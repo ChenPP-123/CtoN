@@ -2,23 +2,23 @@
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
 from .config import get_qweather_settings
+from .database import DatabaseConnection, DatabaseRow
 from .external.qweather_api import QWeatherClient, QWeatherError
 from .stability_service import replace_stability_analysis
 from .time_utils import current_date
 
 
-def refresh_active_route_weather(connection: sqlite3.Connection) -> dict[str, Any]:
+def refresh_active_route_weather(connection: DatabaseConnection) -> dict[str, Any]:
     client = QWeatherClient(get_qweather_settings())
     cities = connection.execute(
         """SELECT DISTINCT c.id, c.name, c.city_code, c.latitude, c.longitude
            FROM cities c
            JOIN route_stations rs ON rs.city_id = c.id
            JOIN routes r ON r.id = rs.route_id
-           WHERE r.is_active = 1 ORDER BY c.id"""
+           WHERE r.is_active = TRUE ORDER BY c.id"""
     ).fetchall()
     results: list[dict[str, Any]] = []
     for city in cities:
@@ -33,7 +33,12 @@ def refresh_active_route_weather(connection: sqlite3.Connection) -> dict[str, An
     return {"date": current_date().isoformat(), "updated_count": updated_count, "cities": results}
 
 
-def _save_snapshot(connection: sqlite3.Connection, city: sqlite3.Row, weather, air_quality) -> None:
+def _save_snapshot(
+    connection: DatabaseConnection,
+    city: DatabaseRow,
+    weather,
+    air_quality,
+) -> None:
     city_id = city["id"]
     observation_date = weather.observed_at[:10]
     connection.execute(
@@ -42,7 +47,7 @@ def _save_snapshot(connection: sqlite3.Connection, city: sqlite3.Row, weather, a
                 weather_text, weather_code, humidity_percent, wind_speed_ms,
                 wind_direction, precipitation_probability_percent, visibility_km,
                 cloud_cover_percent, source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(city_id, observation_date) DO UPDATE SET
                 observed_at = excluded.observed_at,
                 temperature_c = excluded.temperature_c,
@@ -61,13 +66,13 @@ def _save_snapshot(connection: sqlite3.Connection, city: sqlite3.Row, weather, a
          weather.wind_direction, None, weather.visibility_km, weather.cloud_cover_percent, "qweather"),
     )
     observation = connection.execute(
-        "SELECT id FROM weather_observations WHERE city_id = ? AND observation_date = ?",
+        "SELECT id FROM weather_observations WHERE city_id = %s AND observation_date = %s",
         (city_id, observation_date),
     ).fetchone()
     connection.execute(
         """INSERT INTO air_quality_observations (
                 weather_observation_id, city_id, aqi, pm25_ug_m3, pm10_ug_m3, primary_pollutant
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT(weather_observation_id) DO UPDATE SET
                 aqi = excluded.aqi,
                 pm25_ug_m3 = excluded.pm25_ug_m3,

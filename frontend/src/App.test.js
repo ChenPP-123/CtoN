@@ -9,8 +9,6 @@ const apiMocks = vi.hoisted(() => ({
   getWeather: vi.fn(),
   getRandomTrip: vi.fn(),
   getTravelAdvice: vi.fn(),
-  refreshWeather: vi.fn(),
-  generateTravelAdvice: vi.fn(),
 }))
 
 vi.mock('./api', () => ({ api: apiMocks }))
@@ -125,22 +123,31 @@ describe('核心观测交互', () => {
     expect(wrapper.get('h1').text()).toBe('武汉')
   })
 
-  it('按天气、剖面、建议的顺序刷新，并展示新建议', async () => {
+  it('刷新时只并行读取天气、剖面和最新建议', async () => {
     wrapper = await mountLoadedApp()
     const refreshedAdvice = { ...advice, content: '沿线有雨，请将雨具放在随手可取处。' }
-    apiMocks.refreshWeather.mockResolvedValue({ updated_count: 2 })
-    apiMocks.generateTravelAdvice.mockResolvedValue(refreshedAdvice)
+    apiMocks.getTravelAdvice.mockResolvedValue(refreshedAdvice)
 
     await wrapper.get('.refresh-button').trigger('click')
     await flushPromises()
 
-    expect(apiMocks.refreshWeather).toHaveBeenCalledOnce()
     expect(apiMocks.getProfile).toHaveBeenCalledTimes(2)
     expect(apiMocks.getWeather).toHaveBeenCalledTimes(2)
-    expect(apiMocks.generateTravelAdvice).toHaveBeenCalledWith(1)
-    expect(apiMocks.refreshWeather.mock.invocationCallOrder[0]).toBeLessThan(apiMocks.generateTravelAdvice.mock.invocationCallOrder[0])
+    expect(apiMocks.getTravelAdvice).toHaveBeenCalledTimes(2)
+    expect(apiMocks.getTravelAdvice).toHaveBeenLastCalledWith(1)
     expect(wrapper.get('.travel-advice').text()).toContain(refreshedAdvice.content)
-    expect(wrapper.get('.refresh-button').text()).toBe('更新观测')
+    expect(wrapper.get('.refresh-button').text()).toBe('刷新数据')
+  })
+
+  it('建议读取失败时保留原建议并显示错误', async () => {
+    wrapper = await mountLoadedApp()
+    apiMocks.getTravelAdvice.mockRejectedValueOnce(new Error('建议暂不可用'))
+
+    await wrapper.get('.refresh-button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.travel-advice').text()).toContain(advice.content)
+    expect(wrapper.get('.advice-error').text()).toContain('建议暂不可用')
   })
 
   it('初始加载失败后可以重试', async () => {

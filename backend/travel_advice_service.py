@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
-import sqlite3
 from typing import Any
 
 from .config import get_deepseek_settings
+from .database import DatabaseConnection, DatabaseRow
 from .external.deepseek_api import DeepSeekClient, DeepSeekError
 from .services import get_latest_travel_advice
 from .travel_advice_validation import validate_travel_advice
@@ -19,8 +19,8 @@ class RouteWeatherUnavailableError(RuntimeError):
     """The route has no observations for today."""
 
 
-def generate_travel_advice(connection: sqlite3.Connection, route_id: int) -> dict[str, Any]:
-    route = connection.execute("SELECT id, name FROM routes WHERE id = ?", (route_id,)).fetchone()
+def generate_travel_advice(connection: DatabaseConnection, route_id: int) -> dict[str, Any]:
+    route = connection.execute("SELECT id, name FROM routes WHERE id = %s", (route_id,)).fetchone()
     if not route:
         raise LookupError("路线不存在")
 
@@ -38,7 +38,7 @@ def generate_travel_advice(connection: sqlite3.Connection, route_id: int) -> dic
     connection.execute(
         """INSERT INTO travel_reports (
                route_id, travel_date, content, model_name, prompt_hash, generated_at, source_snapshot_json
-           ) VALUES (?, ?, ?, ?, ?, ?, ?)
+           ) VALUES (%s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT(route_id, travel_date) DO UPDATE SET
                content = excluded.content,
                model_name = excluded.model_name,
@@ -61,7 +61,9 @@ def generate_travel_advice(connection: sqlite3.Connection, route_id: int) -> dic
     return saved_advice
 
 
-def _get_route_snapshots(connection: sqlite3.Connection, route_id: int, travel_date: str) -> list[sqlite3.Row]:
+def _get_route_snapshots(
+    connection: DatabaseConnection, route_id: int, travel_date: str
+) -> list[DatabaseRow]:
     return connection.execute(
         """SELECT rs.station_order, rs.station_name, c.name AS city_name,
                   w.id AS weather_observation_id, w.temperature_c, w.feels_like_c,
@@ -70,9 +72,9 @@ def _get_route_snapshots(connection: sqlite3.Connection, route_id: int, travel_d
            FROM route_stations rs
            JOIN cities c ON c.id = rs.city_id
            LEFT JOIN weather_observations w
-                  ON w.city_id = c.id AND w.observation_date = ?
+                  ON w.city_id = c.id AND w.observation_date = %s
            LEFT JOIN air_quality_observations aq ON aq.weather_observation_id = w.id
-           WHERE rs.route_id = ? ORDER BY rs.station_order""",
+           WHERE rs.route_id = %s ORDER BY rs.station_order""",
         (travel_date, route_id),
     ).fetchall()
 
@@ -101,7 +103,7 @@ def _revision_prompt(original_prompt: str, draft: str, validation_error: str) ->
     )
 
 
-def _advice_prompt(route_name: str, travel_date: str, snapshots: list[sqlite3.Row]) -> str:
+def _advice_prompt(route_name: str, travel_date: str, snapshots: list[DatabaseRow]) -> str:
     observations = []
     for snapshot in snapshots:
         if snapshot["weather_observation_id"] is None:

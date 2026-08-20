@@ -4,7 +4,7 @@
 项目名称：CtoN（Chongqing to Nanjing）\
 项目类型：气象数据驱动的高铁旅行可视化系统\
 开发语言：Python\
-数据库：SQLite
+数据库：Neon PostgreSQL
 
 ------------------------------------------------------------------------
 
@@ -184,7 +184,7 @@ CtoN 不是简单的天气查询网站，而是：
 
 # 4.6 旅行建议模式
 
-用户点击“更新观测”后，根据当天沿线数据生成 50–100 个汉字的旅途建议。
+后台每日更新根据当天沿线数据生成 50–100 个汉字的旅途建议。公网用户点击“刷新数据”时只重新读取已保存的天气、剖面和建议，不触发第三方 API；管理员可通过受 Bearer Token 保护的接口手动更新。
 
 内容：
 
@@ -277,25 +277,25 @@ AI模型
 
 # 7. 技术架构
 
-采用前后端分离架构。
+采用前后端分离、同仓库双 Vercel Project 架构。
 
     用户浏览器
 
     ↓
 
-    Vue前端
+    Vue 前端 Vercel Project
 
     ↓
 
-    FastAPI后端
+    同源外部 Rewrite
 
     ↓
 
-    SQLite数据库
+    FastAPI Vercel Python Function（sin1）
 
     ↓
 
-    外部API
+    Neon PostgreSQL（新加坡）与外部 API
 
 ------------------------------------------------------------------------
 
@@ -312,24 +312,23 @@ AI模型
 
 -   Python
 -   FastAPI
--   SQLAlchemy
+-   psycopg 直接 SQL
 
 ## 数据库
 
--   SQLite
+-   Neon PostgreSQL
 
 ## 定时任务
 
--   APScheduler 3.x
--   默认按 Asia/Shanghai 每天 06:30 执行
--   启动缺失补跑和每日执行记录
+-   Vercel Cron 每天 UTC 22:00 触发
+-   Hobby 在北京时间 06:00–06:59 的窗口内启动，不保证精确分钟
+-   数据库日期唯一约束和过期租约防止重复执行
 
 ## 部署
 
--   阿里云 ECS
--   Ubuntu
--   Nginx
--   HTTPS
+-   同一仓库创建前端、后端两个 Vercel Project
+-   后端 Python 3.13 Function 固定 `sin1`
+-   前端通过同源 rewrite 访问后端
 
 ------------------------------------------------------------------------
 
@@ -450,7 +449,11 @@ AI模型
 
 每日自动更新：
 
-    APScheduler 定时触发或启动补跑
+    Vercel Cron 携带 CRON_SECRET 触发
+
+    ↓
+
+    领取 PostgreSQL 操作租约和当日执行记录
 
     ↓
 
@@ -484,25 +487,23 @@ AI模型
 
 # 12. 部署方案
 
-服务器：
-
-阿里云 ECS
-
 部署结构：
 
-    Nginx
+    Vercel 前端 Project（Root Directory: frontend）
 
     ↓
 
-    Vue静态文件
+    /api 与 /_AMapService 同源 rewrite
 
     ↓
 
-    FastAPI
+    Vercel 后端 Project（Root Directory: 仓库根目录，sin1）
 
     ↓
 
-    SQLite
+    Neon PostgreSQL（AWS Singapore）
+
+数据库恢复使用 Neon 当前套餐提供的恢复窗口，并通过恢复分支演练；不使用 ECS、Nginx、systemd、SQLite 本地备份或 OSS。
 
 ------------------------------------------------------------------------
 
@@ -514,7 +515,7 @@ AI模型
 
 目标：
 
-SQLite运行。
+PostgreSQL 建表、固定种子和重复初始化通过。
 
 ------------------------------------------------------------------------
 

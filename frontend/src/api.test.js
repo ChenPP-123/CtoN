@@ -20,8 +20,6 @@ describe('API 路由契约', () => {
     ['气象剖面', () => api.getProfile(3), '/api/v1/routes/3/weather-profile', undefined],
     ['随机旅行', () => api.getRandomTrip(3), '/api/v1/routes/3/random-trip', undefined],
     ['行路建议', () => api.getTravelAdvice(3), '/api/v1/routes/3/travel-advice', undefined],
-    ['刷新天气', () => api.refreshWeather(), '/api/v1/weather/refresh', { method: 'POST' }],
-    ['生成建议', () => api.generateTravelAdvice(3), '/api/v1/routes/3/travel-advice', { method: 'POST' }],
   ])('%s 请求正确的后端路径', async (_name, request, path, options) => {
     await expect(request()).resolves.toEqual({ ok: true })
     expect(fetch).toHaveBeenCalledWith(path, ...(options ? [options] : []))
@@ -34,6 +32,16 @@ describe('API 路由契约', () => {
       json: () => Promise.resolve({ message: '天气服务暂不可用' }),
     })
 
-    await expect(api.refreshWeather()).rejects.toThrow('天气服务暂不可用')
+    await expect(api.getWeather(3)).rejects.toThrow('天气服务暂不可用')
+  })
+
+  it('公开 API 客户端没有写操作或管理员令牌', () => {
+    expect(Object.keys(api)).toEqual([
+      'getRoute',
+      'getWeather',
+      'getProfile',
+      'getRandomTrip',
+      'getTravelAdvice',
+    ])
   })
 })

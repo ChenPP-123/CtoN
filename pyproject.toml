@@ -1,3 +1,6 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["backend/tests"]
+
+[tool.vercel]
+entrypoint = "backend.main:app"

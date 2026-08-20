@@ -1,31 +1,30 @@
-"""FastAPI application for the CtoN offline demonstration."""
+"""FastAPI application for the CtoN weather website."""
 
 from __future__ import annotations
 
+import secrets
 import uuid
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from .config import get_amap_settings
+from .config import ApplicationSettings, get_amap_settings, get_application_settings
 from .daily_update import (
     UpdateAlreadyRunningError,
     generate_travel_advice_now,
     refresh_weather_now,
-    shutdown_daily_update_scheduler,
-    start_daily_update_scheduler,
+    run_daily_update,
 )
-from .database import connect, initialize_database, open_database
+from .database import connect
 from .external.amap_api import AMapError, forward_sdk_request
 from .external.deepseek_api import DeepSeekError
 from .external.qweather_api import QWeatherError
 from .schemas import ApiResponse
-from .seed import seed_database
 from .services import (
     PROFILE_METRICS,
     get_city,
@@ -45,19 +44,33 @@ WEATHER_HISTORY_DAYS = 15
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    initialize_database()
-    with open_database() as connection:
-        seed_database(connection)
-    scheduler = start_daily_update_scheduler()
-    try:
-        yield
-    finally:
-        shutdown_daily_update_scheduler(scheduler)
+    get_application_settings()
+    yield
 
 
-app = FastAPI(title="CtoN API", version=APP_VERSION, lifespan=lifespan)
-allowed_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
-app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_methods=["GET", "POST"], allow_headers=["*"])
+def get_documentation_options(settings: ApplicationSettings) -> dict[str, None]:
+    return (
+        {"docs_url": None, "redoc_url": None, "openapi_url": None}
+        if settings.is_production
+        else {}
+    )
+
+
+application_settings = get_application_settings()
+app = FastAPI(
+    title="CtoN API",
+    version=APP_VERSION,
+    lifespan=lifespan,
+    **get_documentation_options(application_settings),
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(application_settings.cors_origins),
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+admin_bearer = HTTPBearer(auto_error=False)
+cron_bearer = HTTPBearer(auto_error=False)
 
 
 @app.middleware("http")
@@ -103,8 +116,47 @@ def parse_profile_metrics(metrics: str | None) -> tuple[str, ...]:
 async def handle_http_exception(request: Request, exception: HTTPException) -> JSONResponse:
     if exception.status_code == 404:
         data = {"code": 40401, "message": "资源不存在", "data": {}, "request_id": request_id(request)}
-        return JSONResponse(status_code=404, content=data)
-    return JSONResponse(status_code=exception.status_code, content={"code": exception.status_code * 100, "message": str(exception.detail), "data": {}, "request_id": request_id(request)})
+        return JSONResponse(status_code=404, content=data, headers=exception.headers)
+    return JSONResponse(
+        status_code=exception.status_code,
+        content={"code": exception.status_code * 100, "message": str(exception.detail), "data": {}, "request_id": request_id(request)},
+        headers=exception.headers,
+    )
+
+
+def require_admin_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(admin_bearer),
+) -> None:
+    configured_token = get_application_settings().admin_api_token
+    if not configured_token:
+        raise HTTPException(status_code=503, detail="管理员 API 令牌尚未配置")
+    if (
+        credentials is None
+        or credentials.scheme.lower() != "bearer"
+        or not secrets.compare_digest(credentials.credentials, configured_token)
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="管理员凭据无效",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+def require_cron_secret(
+    credentials: HTTPAuthorizationCredentials | None = Depends(cron_bearer),
+) -> None:
+    configured_secret = get_application_settings().cron_secret
+    if (
+        not configured_secret
+        or credentials is None
+        or credentials.scheme.lower() != "bearer"
+        or not secrets.compare_digest(credentials.credentials, configured_secret)
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Cron 凭据无效",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 @app.exception_handler(UpdateAlreadyRunningError)
@@ -217,7 +269,10 @@ def travel_advice(route_id: int, request: Request):
     return response(advice, request)
 
 
-@app.post("/api/v1/routes/{route_id}/travel-advice")
+@app.post(
+    "/api/v1/routes/{route_id}/travel-advice",
+    dependencies=[Depends(require_admin_token)],
+)
 def create_travel_advice(route_id: int, request: Request):
     try:
         advice = generate_travel_advice_now(route_id)
@@ -230,10 +285,24 @@ def create_travel_advice(route_id: int, request: Request):
     return response(advice, request)
 
 
-@app.post("/api/v1/weather/refresh")
+@app.post("/api/v1/weather/refresh", dependencies=[Depends(require_admin_token)])
 def refresh_weather(request: Request):
     try:
         result = refresh_weather_now()
     except QWeatherError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+    return response(result, request)
+
+
+@app.get(
+    "/api/v1/internal/daily-update",
+    dependencies=[Depends(require_cron_secret)],
+    include_in_schema=False,
+)
+def daily_update(request: Request, http_response: Response):
+    result = run_daily_update()
+    http_response.status_code = {
+        "partial": 207,
+        "failed": 500,
+    }.get(result["status"], 200)
     return response(result, request)

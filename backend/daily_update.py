@@ -1,65 +1,83 @@
-"""Run the route's weather and travel-advice update once per business day."""
+"""Run mutually exclusive weather and travel-advice updates."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import logging
-import sqlite3
-from threading import Lock
-from typing import Any, Literal
+from typing import Any
+import uuid
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.date import DateTrigger
-
-from .config import DailyUpdateSettings, get_daily_update_settings
 from .database import open_database
-from .services import get_latest_travel_advice
-from .time_utils import current_date, current_datetime
+from .time_utils import current_date
 from .travel_advice_service import generate_travel_advice
 from .weather_service import refresh_active_route_weather
 
 
 logger = logging.getLogger(__name__)
-RunTrigger = Literal["scheduled", "startup"]
-_update_lock = Lock()
+UPDATE_LEASE_NAME = "external-data-update"
+UPDATE_LEASE_SECONDS = 360
 
 
 class UpdateAlreadyRunningError(RuntimeError):
-    """Another automatic or manual external-data update owns the process lock."""
+    """Another function invocation owns the database update lease."""
+
+
+@contextmanager
+def update_lease() -> Iterator[None]:
+    owner_token = str(uuid.uuid4())
+    if not _acquire_update_lease(owner_token):
+        raise UpdateAlreadyRunningError("观测更新正在进行，请稍后重试")
+    try:
+        yield
+    finally:
+        _release_update_lease(owner_token)
+
+
+def _acquire_update_lease(owner_token: str) -> bool:
+    with open_database() as connection:
+        claimed_lease = connection.execute(
+            """INSERT INTO operation_leases (lease_name, owner_token, expires_at)
+               VALUES (%s, %s, NOW() + %s * INTERVAL '1 second')
+               ON CONFLICT(lease_name) DO UPDATE SET
+                   owner_token = excluded.owner_token,
+                   expires_at = excluded.expires_at
+               WHERE operation_leases.expires_at <= NOW()
+               RETURNING owner_token""",
+            (UPDATE_LEASE_NAME, owner_token, UPDATE_LEASE_SECONDS),
+        ).fetchone()
+    return claimed_lease is not None
+
+
+def _release_update_lease(owner_token: str) -> None:
+    with open_database() as connection:
+        connection.execute(
+            "DELETE FROM operation_leases WHERE lease_name = %s AND owner_token = %s",
+            (UPDATE_LEASE_NAME, owner_token),
+        )
 
 
 def refresh_weather_now() -> dict[str, Any]:
-    if not _update_lock.acquire(blocking=False):
-        raise UpdateAlreadyRunningError("观测更新正在进行，请稍后重试")
-    try:
+    with update_lease():
         with open_database() as connection:
             return refresh_active_route_weather(connection)
-    finally:
-        _update_lock.release()
 
 
 def generate_travel_advice_now(route_id: int) -> dict[str, Any]:
-    if not _update_lock.acquire(blocking=False):
-        raise UpdateAlreadyRunningError("观测更新正在进行，请稍后重试")
-    try:
+    with update_lease():
         with open_database() as connection:
             return generate_travel_advice(connection, route_id)
-    finally:
-        _update_lock.release()
 
 
-def run_daily_update(trigger: RunTrigger = "scheduled") -> dict[str, Any]:
-    """Claim and run today's update; a claimed date is never retried automatically."""
-    _update_lock.acquire()
-    try:
+def run_daily_update() -> dict[str, Any]:
+    """Claim and run today's cron update; a claimed date is not retried."""
+    with update_lease():
         run_date = current_date().isoformat()
-        if not _claim_run(run_date, trigger):
+        if not _claim_run(run_date):
             logger.info("每日更新已跳过：%s 已有执行记录", run_date)
             return {"run_date": run_date, "status": "skipped"}
         return _execute_claimed_run(run_date)
-    finally:
-        _update_lock.release()
 
 
 def _execute_claimed_run(run_date: str) -> dict[str, Any]:
@@ -76,18 +94,20 @@ def _execute_claimed_run(run_date: str) -> dict[str, Any]:
             with open_database() as connection:
                 weather_result = refresh_active_route_weather(connection)
             weather_updated_count = weather_result["updated_count"]
-            failed_cities = [city for city in weather_result["cities"] if city["status"] == "failed"]
+            failed_cities = [
+                city for city in weather_result["cities"] if city["status"] == "failed"
+            ]
             weather_failed_count = len(failed_cities)
             errors.extend(
-                f"{city['city_name']}天气刷新失败：{city['reason']}" for city in failed_cities
+                f"{city['city_name']}天气刷新失败：{city['reason']}"
+                for city in failed_cities
             )
         except Exception as error:
             weather_failed_count = expected_city_count
             errors.append(f"天气刷新失败：{error}")
             logger.exception("每日天气刷新失败")
 
-        route_ids = _active_route_ids()
-        for route_id in route_ids:
+        for route_id in _active_route_ids():
             try:
                 with open_database() as connection:
                     generate_travel_advice(connection, route_id)
@@ -117,15 +137,6 @@ def _execute_claimed_run(run_date: str) -> dict[str, Any]:
         advice_failed_count=advice_failed_count,
         error_summary="\n".join(errors)[:4000] or None,
     )
-    logger.info(
-        "每日更新结束：date=%s status=%s weather=%s/%s advice=%s/%s",
-        run_date,
-        status,
-        weather_updated_count,
-        weather_updated_count + weather_failed_count,
-        advice_generated_count,
-        advice_generated_count + advice_failed_count,
-    )
     return {
         "run_date": run_date,
         "status": status,
@@ -153,30 +164,31 @@ def _run_status(
 def _active_city_count() -> int:
     with open_database() as connection:
         row = connection.execute(
-            """SELECT COUNT(DISTINCT c.id)
+            """SELECT COUNT(DISTINCT c.id) AS city_count
                FROM cities c
                JOIN route_stations rs ON rs.city_id = c.id
                JOIN routes r ON r.id = rs.route_id
-               WHERE r.is_active = 1"""
+               WHERE r.is_active = TRUE"""
         ).fetchone()
-    return row[0]
+    return row["city_count"]
 
 
 def _active_route_ids() -> list[int]:
     with open_database() as connection:
-        rows = connection.execute("SELECT id FROM routes WHERE is_active = 1 ORDER BY id")
+        rows = connection.execute("SELECT id FROM routes WHERE is_active = TRUE ORDER BY id")
         return [row["id"] for row in rows]
 
 
-def _claim_run(run_date: str, trigger: RunTrigger) -> bool:
+def _claim_run(run_date: str) -> bool:
     with open_database() as connection:
-        cursor = connection.execute(
-            """INSERT OR IGNORE INTO daily_update_runs (
-                   run_date, trigger, status, started_at
-               ) VALUES (?, ?, 'running', ?)""",
-            (run_date, trigger, _utc_now()),
-        )
-    return cursor.rowcount == 1
+        claimed_run = connection.execute(
+            """INSERT INTO daily_update_runs (run_date, trigger, status, started_at)
+               VALUES (%s, 'cron', 'running', %s)
+               ON CONFLICT(run_date) DO NOTHING
+               RETURNING run_date""",
+            (run_date, _utc_now()),
+        ).fetchone()
+    return claimed_run is not None
 
 
 def _finish_run(
@@ -192,10 +204,10 @@ def _finish_run(
     with open_database() as connection:
         connection.execute(
             """UPDATE daily_update_runs
-               SET status = ?, finished_at = ?, weather_updated_count = ?,
-                   weather_failed_count = ?, advice_generated_count = ?,
-                   advice_failed_count = ?, error_summary = ?
-               WHERE run_date = ?""",
+               SET status = %s, finished_at = %s, weather_updated_count = %s,
+                   weather_failed_count = %s, advice_generated_count = %s,
+                   advice_failed_count = %s, error_summary = %s
+               WHERE run_date = %s""",
             (
                 status,
                 _utc_now(),
@@ -207,105 +219,6 @@ def _finish_run(
                 run_date,
             ),
         )
-
-
-def start_daily_update_scheduler() -> AsyncIOScheduler | None:
-    settings = get_daily_update_settings()
-    if not settings.is_enabled:
-        logger.info("每日自动更新已禁用")
-        return None
-
-    scheduler = AsyncIOScheduler(timezone=settings.timezone)
-    scheduler.add_job(
-        run_daily_update,
-        CronTrigger(
-            hour=settings.run_time.hour,
-            minute=settings.run_time.minute,
-            timezone=settings.timezone,
-        ),
-        id="daily-weather-and-advice-update",
-        name="每日天气与路线建议更新",
-        kwargs={"trigger": "scheduled"},
-        coalesce=True,
-        max_instances=1,
-        misfire_grace_time=7200,
-        replace_existing=True,
-    )
-    if _needs_startup_catchup(settings):
-        scheduler.add_job(
-            run_daily_update,
-            DateTrigger(run_date=current_datetime()),
-            id="startup-daily-update-catchup",
-            name="启动时补跑每日更新",
-            kwargs={"trigger": "startup"},
-            misfire_grace_time=60,
-            replace_existing=True,
-        )
-    scheduler.start()
-    logger.info(
-        "每日自动更新已启动：每天 %s，时区 %s",
-        settings.run_time.strftime("%H:%M"),
-        settings.timezone.key,
-    )
-    return scheduler
-
-
-def shutdown_daily_update_scheduler(scheduler: AsyncIOScheduler | None) -> None:
-    if scheduler is not None and scheduler.running:
-        scheduler.shutdown(wait=False)
-
-
-def _needs_startup_catchup(settings: DailyUpdateSettings) -> bool:
-    now = current_datetime()
-    if now.timetz().replace(tzinfo=None) < settings.run_time:
-        return False
-
-    run_date = now.date().isoformat()
-    with open_database() as connection:
-        if connection.execute(
-            "SELECT 1 FROM daily_update_runs WHERE run_date = ?", (run_date,)
-        ).fetchone():
-            return False
-        if not _has_complete_data(connection, run_date):
-            return True
-        connection.execute(
-            """INSERT INTO daily_update_runs (
-                   run_date, trigger, status, started_at, finished_at, error_summary
-               ) VALUES (?, 'startup', 'skipped', ?, ?, ?)""",
-            (run_date, _utc_now(), _utc_now(), "当天观测和路线建议已完整"),
-        )
-    return False
-
-
-def _has_complete_data(connection: sqlite3.Connection, run_date: str) -> bool:
-    expected_city_count = connection.execute(
-        """SELECT COUNT(DISTINCT c.id)
-           FROM cities c
-           JOIN route_stations rs ON rs.city_id = c.id
-           JOIN routes r ON r.id = rs.route_id
-           WHERE r.is_active = 1"""
-    ).fetchone()[0]
-    observed_city_count = connection.execute(
-        """SELECT COUNT(DISTINCT w.city_id)
-           FROM weather_observations w
-           JOIN route_stations rs ON rs.city_id = w.city_id
-           JOIN routes r ON r.id = rs.route_id
-           WHERE r.is_active = 1 AND w.observation_date = ?""",
-        (run_date,),
-    ).fetchone()[0]
-    if observed_city_count != expected_city_count:
-        return False
-
-    for route_id in _active_route_ids_for_connection(connection):
-        advice = get_latest_travel_advice(connection, route_id)
-        if advice is None or advice["travel_date"] != run_date:
-            return False
-    return True
-
-
-def _active_route_ids_for_connection(connection: sqlite3.Connection) -> list[int]:
-    rows = connection.execute("SELECT id FROM routes WHERE is_active = 1 ORDER BY id")
-    return [row["id"] for row in rows]
 
 
 def _utc_now() -> str:
