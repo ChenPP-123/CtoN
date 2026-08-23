@@ -237,9 +237,11 @@ onBeforeUnmount(() => {
             <img v-if="readyHero?.imageSource" :key="readyHero.imageSource" class="hero-image" :src="readyHero.imageSource" :alt="`${displayedCity?.city_name}当地天气景象`">
           </Transition>
           <div class="hero-wash"></div>
-          <div class="hero-copy" :class="`tone-${visual.textTone}`">
-            <p class="eyebrow">第 {{ String(displayedCity?.station_order || 1).padStart(2, '0') }} 站 · {{ displayedDate }}</p>
-            <h1>{{ displayedCity?.city_name }}</h1>
+          <div :key="displayedCity?.city_id" class="hero-copy" :class="`tone-${visual.textTone}`">
+            <div class="hero-title">
+              <p class="eyebrow">第 {{ String(displayedCity?.station_order || 1).padStart(2, '0') }} 站 · {{ displayedDate }}</p>
+              <h1>{{ displayedCity?.city_name }}</h1>
+            </div>
             <p class="city-phrase">{{ visual.phrase }}</p>
             <p class="hero-poem">{{ readyHero?.imageFailed ? visual.fallbackPoem : visual.poem }}</p>
           </div>

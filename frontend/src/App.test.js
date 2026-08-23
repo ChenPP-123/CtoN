@@ -224,6 +224,7 @@ describe('核心观测交互', () => {
     wrapper = await mountLoadedApp()
     imageBehavior = 'deferred'
     const oldImage = wrapper.get('.hero-image').attributes('src')
+    const oldCopy = wrapper.get('.hero-copy').element
 
     await wrapper.get('[data-test="select-next"]').trigger('click')
     await flushPromises()
@@ -237,6 +238,10 @@ describe('核心观测交互', () => {
     await flushPromises()
 
     expect(wrapper.get('.hero-image').attributes('src')).toBe('/weather/wuhan/summer-clear.webp')
+    expect(wrapper.get('.hero-copy').element).not.toBe(oldCopy)
+    expect(wrapper.get('.hero-title h1').text()).toBe('武汉')
+    expect(wrapper.get('.city-phrase').text()).not.toBe('')
+    expect(wrapper.get('.hero-poem').text()).not.toBe('')
     expect(wrapper.find('.hero-journey').exists()).toBe(false)
   })
 
