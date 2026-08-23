@@ -7,13 +7,14 @@
 ## 当前生产基线
 
 ```text
-访客入口：https://cton-frontend.vercel.app
+访客入口：https://www.ctonrail.org
+Vercel 前端部署域名：https://cton-frontend.vercel.app
 后端域名：https://cton-backend.vercel.app
 后端 Project Root Directory：仓库根目录
 前端 Project Root Directory：frontend
 ```
 
-公开文档和页面只宣传前端域名。后端域名用于同源 rewrite、健康检查和受保护的运维接口。
+公开文档和页面只宣传自定义前端域名。Vercel 前端部署域名和后端域名用于部署、同源 rewrite、健康检查与受保护的运维接口。
 
 ## 1. 准备
 
@@ -104,7 +105,9 @@ VITE_AMAP_JS_KEY=
 
 `/assets/` 缓存一年，`/weather/` 缓存 30 天。天气图片已转成 WebP，构建会检查所有引用存在且待上传前端源文件小于 100 MiB。
 
-部署完成后，把前端正式域名加入高德 JS Key 的允许域名。浏览器包中不应出现后端域名、`ADMIN_API_TOKEN` 或 `CRON_SECRET`。
+部署完成后，将自定义域名绑定到前端 Project。本项目使用 `www.ctonrail.org` 作为主域名，`ctonrail.org` 通过 `308` 永久跳转到 `www`。外部 DNS 记录保持仅 DNS 解析，不在 Vercel 前增加反向代理。配置后确认两个域名均通过 Vercel 验证，HTTPS 证书包含根域名和 `www` 并启用自动续期。
+
+把自定义正式域名加入高德 JS Key 的允许域名，并保留 Vercel 前端部署域名用于排障。浏览器包中不应出现后端域名、`ADMIN_API_TOKEN` 或 `CRON_SECRET`。
 
 ## 5. Cron 与限流
 
@@ -203,8 +206,8 @@ BACKEND_ORIGIN=https://cton-backend.vercel.app npm run build
 
 ```bash
 curl -fsS https://cton-backend.vercel.app/api/v1/health
-curl -fsS https://cton-frontend.vercel.app/api/v1/routes/1
-curl -fsS https://cton-frontend.vercel.app/api/v1/routes/1/travel-advice
+curl -fsS https://www.ctonrail.org/api/v1/routes/1
+curl -fsS https://www.ctonrail.org/api/v1/routes/1/travel-advice
 ```
 
 此外应确认：

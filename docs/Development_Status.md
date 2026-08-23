@@ -6,10 +6,10 @@
 
 CtoN 的产品目标是让访客通过一个稳定的公开域名直接访问网站，在同一体验中浏览重庆至南京高铁沿线的地图、天气、气象剖面、随机旅途、城市诗句和全线路建议。
 
-当前目标已经以 Vercel 正式域名实现：
+当前目标已经以自定义正式域名实现：
 
 ```text
-https://cton-frontend.vercel.app
+https://www.ctonrail.org
 ```
 
 这个域名是唯一的访客入口。浏览器通过同源 rewrite 访问后端，不需要知道后端地址，也不接触任何管理凭据。
@@ -26,16 +26,17 @@ https://cton-frontend.vercel.app
 | 数据库 | Neon PostgreSQL 新加坡区已初始化，运行时使用池化连接 |
 | 第三方服务 | 和风天气、DeepSeek、高德地图生产链路均已实际调用验证 |
 | 自动更新 | Vercel Cron 已启用；手动 Run 成功，同日重复执行会安全跳过 |
-| 代码同步 | `main` 已推送至 GitHub；已验收应用基线为 `745b4fa` |
+| 代码同步 | `main` 已推送至 GitHub；已验收应用基线为 `75aa9b4` |
 
 ## 3. 生产基线
 
 ### 公开入口
 
-- 前端：<https://cton-frontend.vercel.app>
+- 前端：<https://www.ctonrail.org>
+- Vercel 部署域名：<https://cton-frontend.vercel.app>
 - 后端健康检查：<https://cton-backend.vercel.app/api/v1/health>
 
-后端正式域名用于运维和前端 rewrite，不应作为访客入口宣传。
+Vercel 前端部署域名和后端域名用于部署、运维、同源 rewrite 与排障，不应作为访客入口宣传。
 
 ### 部署拓扑
 
@@ -61,6 +62,8 @@ Neon 提供两类数据库地址：
 - 未携带管理员令牌的写接口返回 `401`，正确令牌可更新天气和建议；
 - 八座城市的天气与空气质量请求均返回成功，DeepSeek 建议生成成功；
 - 高德正式域名白名单已配置，手机访问地图表现正常；
+- 自定义域名 `www.ctonrail.org` 已绑定前端 Project，根域名通过 `308` 跳转到 `www`；两个域名的 HTTPS 证书已签发并启用自动续期；
+- 中国内地网络已实际验证首页、同源 API 和高德地图可以通过自定义域名直接访问；
 - Cron 路径为 `/api/v1/internal/daily-update`，计划为 `0 22 * * *`；
 - Cron 首次手动运行完成全部更新，第二次运行记录为 `skipped`，没有重复调用第三方服务；
 - `/docs`、`/redoc` 和 `/openapi.json` 在生产环境不可用。

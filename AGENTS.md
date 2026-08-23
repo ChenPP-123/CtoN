@@ -2,7 +2,7 @@
 
 ## 当前生产基线
 
-- 项目第一版已经上线，访客唯一入口为 `https://cton-frontend.vercel.app`。
+- 项目第一版已经上线，访客唯一入口为 `https://www.ctonrail.org`；`cton-frontend.vercel.app` 仅作为 Vercel 底层部署和排障域名保留。
 - 同一 GitHub 仓库连接两个 Vercel Project：`cton-backend` 使用仓库根目录，`cton-frontend` 使用 `frontend`。
 - 后端运行于 Vercel FastAPI Python 3.13 Function，数据存储在 Neon PostgreSQL；前端通过同源 rewrite 访问后端。
 - Vercel Cron 路径为 `/api/v1/internal/daily-update`，表达式为 `0 22 * * *`。手动生产运行和同日幂等跳过已经验证。
