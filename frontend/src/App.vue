@@ -232,6 +232,14 @@ onBeforeUnmount(() => {
     <div v-if="error && !route" class="error-state"><p>{{ error }}</p><button @click="load">重新加载</button></div>
     <template v-else-if="!loading && route && profile">
       <section id="top" class="city-stage">
+        <header class="site-header">
+          <a class="brand" href="#top">Cto<span>N</span></a>
+          <div class="route-identity">
+            <p class="route-title">重庆北 → 南京南</p>
+            <p class="route-meta">8 STATIONS · 1245 KM · 沿线气象观测</p>
+          </div>
+          <button class="refresh-button" :disabled="refreshing" @click="refresh">{{ refreshLabel }}</button>
+        </header>
         <section class="hero" :style="{ background: visual.gradient }">
           <Transition name="hero-image">
             <img v-if="readyHero?.imageSource" :key="readyHero.imageSource" class="hero-image" :src="readyHero.imageSource" :alt="`${displayedCity?.city_name}当地天气景象`">
@@ -257,14 +265,6 @@ onBeforeUnmount(() => {
             </div>
           </Transition>
         </section>
-        <header class="site-header">
-          <a class="brand" href="#top">Cto<span>N</span></a>
-          <div class="route-identity">
-            <p class="route-title">重庆北 → 南京南</p>
-            <p class="route-meta">8 STATIONS · 1245 KM · 沿线气象观测</p>
-          </div>
-          <button class="refresh-button" :disabled="refreshing" @click="refresh">{{ refreshLabel }}</button>
-        </header>
         <aside class="map-dock">
           <RouteMap :stations="route.stations" :geometry="route.geometry" :selected-city-id="selectedCityId" :train-destination-city-id="trainDestinationCityId" :train-duration-ms="TRAIN_MOVE_MS" :autoplay-enabled="autoplayEnabled" @select="selectCity" @toggle-autoplay="toggleAutoplay" />
           <button class="random-button" :disabled="traveling" @click="randomTravel"><span class="travel-mark" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M4 17.5 10.5 14l3.1 1.7L20 6.5" /><path d="M15.5 6.5H20v4.5" /></svg></span><span class="travel-label">{{ traveling ? `前往 ${selectedCity?.city_name}…` : '随机旅行' }}</span><span class="travel-arrow" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M5 12h13M13 6l6 6-6 6" /></svg></span></button>

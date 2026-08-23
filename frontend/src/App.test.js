@@ -124,6 +124,7 @@ describe('核心观测交互', () => {
     expect(apiMocks.getRoute).toHaveBeenCalledWith(1)
     expect(apiMocks.getProfile).toHaveBeenCalledWith(1)
     expect(apiMocks.getWeather).toHaveBeenCalledWith(1)
+    expect(wrapper.get('.city-stage').element.firstElementChild).toBe(wrapper.get('.site-header').element)
     expect(wrapper.get('h1').text()).toBe('重庆')
     expect(wrapper.get('[data-test="weather-panel"]').text()).toBe('重庆 29')
 

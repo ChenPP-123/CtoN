@@ -18,6 +18,8 @@ const hasUsableCoordinates = computed(() => props.stations.length > 0 && props.s
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 const ROUTE_CENTER = [112.6741, 30.7831]
 const ROUTE_ZOOM = 6.2
+const MOBILE_MAP_WIDTH = 700
+const MOBILE_ROUTE_PADDING = [42, 46, 42, 46]
 let map
 let AMap
 let routeCasing
@@ -173,6 +175,22 @@ function moveTrainToDestination(cityId) {
   else animateTrain(positionOf(fromStation), positionOf(destination))
 }
 
+function fitRouteToViewport() {
+  if (!map || !mapElement.value) return
+  if (mapElement.value.clientWidth < MOBILE_MAP_WIDTH) {
+    const routeFeatures = [...stationMarkers.values()].map(({ marker }) => marker).concat(routeCasing, routeLine)
+    map.setFitView(routeFeatures, false, MOBILE_ROUTE_PADDING)
+  } else {
+    map.setZoomAndCenter(ROUTE_ZOOM, ROUTE_CENTER)
+  }
+}
+
+function resizeMap() {
+  if (!map) return
+  map.resize()
+  fitRouteToViewport()
+}
+
 async function initializeMap() {
   if (!hasUsableCoordinates.value) {
     unavailableReason.value = '路线未提供完整站点坐标。'
@@ -197,11 +215,7 @@ async function initializeMap() {
     trainElement = createTrainElement()
     trainMarker = new AMap.Marker({ position: positionOf(stationByCityId(props.selectedCityId) || props.stations[0]), content: trainElement, offset: new AMap.Pixel(-19, -19), zIndex: 30 })
     map.add(trainMarker)
-    if (mapElement.value.clientWidth < 700) {
-      map.setFitView([...stationMarkers.values()].map(({ marker }) => marker).concat(routeCasing, routeLine), false, [50, 56, 50, 56])
-    } else {
-      map.setZoomAndCenter(ROUTE_ZOOM, ROUTE_CENTER)
-    }
+    fitRouteToViewport()
     updateSelectedMarker()
     moveTrainToDestination(props.trainDestinationCityId)
   } catch (error) {
@@ -225,9 +239,13 @@ watch(() => props.trainDestinationCityId, (cityId) => {
   }
 })
 
-onMounted(initializeMap)
+onMounted(() => {
+  window.addEventListener('resize', resizeMap)
+  initializeMap()
+})
 onBeforeUnmount(() => {
   cancelTrainAnimation()
+  window.removeEventListener('resize', resizeMap)
   stationMarkers.clear()
   if (map) map.destroy()
   map = undefined
