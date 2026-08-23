@@ -253,6 +253,7 @@ onBeforeUnmount(() => {
             <img v-if="readyHero?.imageSource" :key="readyHero.imageSource" class="hero-image" :src="readyHero.imageSource" :alt="`${displayedCity?.city_name}当地天气景象`">
           </Transition>
           <div class="hero-wash"></div>
+          <p class="route-theme">一趟从重庆到南京的高铁，也是一条穿越天气、地形与城市气质的旅程</p>
           <div :key="displayedCity?.city_id" class="hero-copy" :class="`tone-${visual.textTone}`">
             <div class="hero-title">
               <p class="eyebrow">第 {{ String(displayedCity?.station_order || 1).padStart(2, '0') }} 站 · {{ displayedDate }}</p>

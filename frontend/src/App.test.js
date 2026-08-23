@@ -131,6 +131,9 @@ describe('核心观测交互', () => {
       target: '_blank',
       rel: 'noopener noreferrer',
     })
+    const routeTheme = wrapper.get('.route-theme')
+    expect(routeTheme.text()).toBe('一趟从重庆到南京的高铁，也是一条穿越天气、地形与城市气质的旅程')
+    expect(routeTheme.element.parentElement).toBe(wrapper.get('.hero').element)
     expect(wrapper.get('h1').text()).toBe('重庆')
     expect(wrapper.get('[data-test="weather-panel"]').text()).toBe('重庆 29')
 
