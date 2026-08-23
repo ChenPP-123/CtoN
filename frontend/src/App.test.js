@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App.vue'
 
@@ -47,6 +47,7 @@ const stubs = {
     template: `
       <div data-test="route-map" :data-selected="selectedCityId" :data-autoplay="autoplayEnabled">
         <button data-test="select-next" @click="$emit('select', stations[1].city_id)">选择武汉</button>
+        <button data-test="select-first" @click="$emit('select', stations[0].city_id)">选择重庆</button>
         <button data-test="toggle-autoplay" @click="$emit('toggle-autoplay')">切换巡游</button>
       </div>
     `,
@@ -61,6 +62,36 @@ const stubs = {
   },
 }
 
+let imageBehavior
+let imageRequests
+
+class MockImage {
+  set src(source) {
+    this.source = source
+    imageRequests.push(this)
+    if (imageBehavior === 'resolve') queueMicrotask(() => this.succeed())
+    if (imageBehavior === 'reject') queueMicrotask(() => this.fail())
+  }
+
+  succeed() {
+    this.onload?.()
+  }
+
+  fail() {
+    this.onerror?.(new Error(`无法加载 ${this.source}`))
+  }
+}
+
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 async function mountLoadedApp() {
   apiMocks.getRoute.mockResolvedValue(route)
   apiMocks.getProfile.mockResolvedValue(profile)
@@ -73,10 +104,17 @@ async function mountLoadedApp() {
 
 let wrapper
 
+beforeEach(() => {
+  imageBehavior = 'resolve'
+  imageRequests = []
+  vi.stubGlobal('Image', MockImage)
+})
+
 afterEach(() => {
   wrapper?.unmount()
   wrapper = undefined
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('核心观测交互', () => {
@@ -166,5 +204,132 @@ describe('核心观测交互', () => {
 
     expect(apiMocks.getRoute).toHaveBeenCalledTimes(2)
     expect(wrapper.get('h1').text()).toBe('重庆')
+  })
+
+  it('天气请求未完成时保留旧图并显示目的地加载层', async () => {
+    wrapper = await mountLoadedApp()
+    const wuhanWeather = deferred()
+    apiMocks.getWeather.mockReturnValueOnce(wuhanWeather.promise)
+    const oldImage = wrapper.get('.hero-image').attributes('src')
+
+    await wrapper.get('[data-test="select-next"]').trigger('click')
+
+    expect(wrapper.get('[data-test="route-map"]').attributes('data-selected')).toBe('2')
+    expect(wrapper.get('.hero-image').attributes('src')).toBe(oldImage)
+    expect(wrapper.get('.hero-journey').text()).toContain('正在抵达')
+    expect(wrapper.get('.hero-journey').text()).toContain('武汉')
+  })
+
+  it('图片预加载完成后直接切换到准确天气图', async () => {
+    wrapper = await mountLoadedApp()
+    imageBehavior = 'deferred'
+    const oldImage = wrapper.get('.hero-image').attributes('src')
+
+    await wrapper.get('[data-test="select-next"]').trigger('click')
+    await flushPromises()
+
+    const pendingImage = imageRequests.at(-1)
+    expect(pendingImage.source).toBe('/weather/wuhan/summer-clear.webp')
+    expect(wrapper.get('.hero-image').attributes('src')).toBe(oldImage)
+    expect(wrapper.html()).not.toContain('/weather/wuhan/summer-normal.webp')
+
+    pendingImage.succeed()
+    await flushPromises()
+
+    expect(wrapper.get('.hero-image').attributes('src')).toBe('/weather/wuhan/summer-clear.webp')
+    expect(wrapper.find('.hero-journey').exists()).toBe(false)
+  })
+
+  it('快速连续切换时忽略过期图片回调', async () => {
+    wrapper = await mountLoadedApp()
+    imageBehavior = 'deferred'
+
+    await wrapper.get('[data-test="select-next"]').trigger('click')
+    await flushPromises()
+    const staleWuhanImage = imageRequests.at(-1)
+
+    await wrapper.get('[data-test="select-first"]').trigger('click')
+    await flushPromises()
+    const currentChongqingImage = imageRequests.at(-1)
+
+    currentChongqingImage.succeed()
+    await flushPromises()
+    expect(wrapper.get('h1').text()).toBe('重庆')
+    expect(wrapper.find('.hero-journey').exists()).toBe(false)
+
+    staleWuhanImage.succeed()
+    await flushPromises()
+    expect(wrapper.get('h1').text()).toBe('重庆')
+    expect(wrapper.get('.hero-image').attributes('src')).toBe('/weather/chongqing/summer-clear.webp')
+  })
+
+  it('快速连续切换时忽略过期天气响应', async () => {
+    wrapper = await mountLoadedApp()
+    const staleWuhanWeather = deferred()
+    apiMocks.getWeather
+      .mockReturnValueOnce(staleWuhanWeather.promise)
+      .mockResolvedValueOnce(weatherFor(1))
+
+    await wrapper.get('[data-test="select-next"]').trigger('click')
+    await wrapper.get('[data-test="select-first"]').trigger('click')
+    await flushPromises()
+
+    staleWuhanWeather.resolve(weatherFor(2))
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="weather-panel"]').text()).toBe('重庆 29')
+    expect(wrapper.get('.hero-image').attributes('src')).toBe('/weather/chongqing/summer-clear.webp')
+    expect(wrapper.find('.hero-journey').exists()).toBe(false)
+  })
+
+  it('主图加载失败时改用目的城市季节备用图', async () => {
+    wrapper = await mountLoadedApp()
+    imageBehavior = 'deferred'
+
+    await wrapper.get('[data-test="select-next"]').trigger('click')
+    await flushPromises()
+    imageRequests.at(-1).fail()
+    await flushPromises()
+
+    const fallbackImage = imageRequests.at(-1)
+    expect(fallbackImage.source).toBe('/weather/wuhan/summer-normal.webp')
+    fallbackImage.succeed()
+    await flushPromises()
+
+    expect(wrapper.get('.hero-image').attributes('src')).toMatch(/^\/weather\/wuhan\/.+-normal\.webp$/)
+    expect(wrapper.find('.hero-journey').exists()).toBe(false)
+  })
+
+  it('主图和备用图均失败时显示目的城市主题背景和明确错误', async () => {
+    wrapper = await mountLoadedApp()
+    imageBehavior = 'deferred'
+
+    await wrapper.get('[data-test="select-next"]').trigger('click')
+    await flushPromises()
+    imageRequests.at(-1).fail()
+    await flushPromises()
+    imageRequests.at(-1).fail()
+    await flushPromises()
+
+    expect(wrapper.find('.hero-image').exists()).toBe(false)
+    expect(wrapper.get('.inline-error').text()).toContain('武汉天气图片加载失败')
+    expect(wrapper.find('.hero-journey').exists()).toBe(false)
+  })
+
+  it('天气请求失败时结束加载、显示备用视觉并允许重试', async () => {
+    wrapper = await mountLoadedApp()
+    apiMocks.getWeather.mockRejectedValueOnce(new Error('天气暂不可用'))
+
+    await wrapper.get('[data-test="select-next"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.hero-journey').exists()).toBe(false)
+    expect(wrapper.get('.hero-image').attributes('src')).toMatch(/^\/weather\/wuhan\/.+-normal\.webp$/)
+    expect(wrapper.get('.inline-error').text()).toContain('天气暂不可用')
+
+    await wrapper.get('.inline-error button').trigger('click')
+    await flushPromises()
+    expect(apiMocks.getWeather).toHaveBeenLastCalledWith(2)
+    expect(wrapper.find('.inline-error').exists()).toBe(false)
   })
 })

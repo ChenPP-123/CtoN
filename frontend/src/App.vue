@@ -19,18 +19,67 @@ const refreshing = ref(false)
 const adviceRefreshing = ref(false)
 const adviceError = ref('')
 const traveling = ref(false)
+const heroLoading = ref(false)
 const error = ref('')
-const heroImageFailed = ref(false)
+const readyHero = ref(null)
 const AUTOPLAY_CYCLE_MS = 10_000
 const TRAIN_MOVE_MS = 1_200
 const metrics = [['temperature', '温度'], ['humidity', '湿度'], ['aqi', 'AQI'], ['wind_speed', '风速']]
 const selectedCity = computed(() => route.value?.stations.find((station) => station.city_id === selectedCityId.value))
-const visual = computed(() => visualForCity(selectedCity.value?.city_name, weather.value?.weather?.text, weather.value?.date))
+const displayedCity = computed(() => readyHero.value?.city || selectedCity.value)
+const displayedDate = computed(() => readyHero.value?.weatherDate || '读取观测中')
+const visual = computed(() => readyHero.value?.visual || visualForCity(selectedCity.value?.city_name, weather.value?.weather?.text, weather.value?.date))
 const themeStyle = computed(() => ({ '--theme-primary': visual.value.primary, '--theme-accent': visual.value.accent, '--hero-overlay': visual.value.overlay, '--hero-fallback': visual.value.gradient }))
 const refreshLabel = computed(() => refreshing.value ? '刷新中…' : '刷新数据')
 let departureTimer
 let arrivalTimer
 let weatherRequestId = 0
+
+function preloadImage(source) {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = resolve
+    image.onerror = reject
+    image.src = source
+  })
+}
+
+function isCurrentWeatherRequest(requestId, cityId) {
+  return requestId === weatherRequestId && selectedCityId.value === cityId
+}
+
+function addHeroImageError(cityName) {
+  const message = `${cityName}天气图片加载失败，已显示城市主题背景。`
+  error.value = error.value ? `${error.value}；${message}` : message
+}
+
+async function prepareHero(city, weatherData, requestId, { fallbackOnly = false } = {}) {
+  const nextVisual = visualForCity(city.city_name, fallbackOnly ? '' : weatherData?.weather?.text, weatherData?.date)
+  const primarySource = fallbackOnly ? nextVisual.fallbackImage : nextVisual.image
+
+  try {
+    await preloadImage(primarySource)
+    if (!isCurrentWeatherRequest(requestId, city.city_id)) return
+    readyHero.value = { city, visual: nextVisual, weatherDate: weatherData?.date, imageSource: primarySource, imageFailed: fallbackOnly }
+    return
+  } catch {
+    if (!isCurrentWeatherRequest(requestId, city.city_id)) return
+  }
+
+  if (primarySource !== nextVisual.fallbackImage) {
+    try {
+      await preloadImage(nextVisual.fallbackImage)
+      if (!isCurrentWeatherRequest(requestId, city.city_id)) return
+      readyHero.value = { city, visual: nextVisual, weatherDate: weatherData?.date, imageSource: nextVisual.fallbackImage, imageFailed: true }
+      return
+    } catch {
+      if (!isCurrentWeatherRequest(requestId, city.city_id)) return
+    }
+  }
+
+  readyHero.value = { city, visual: nextVisual, weatherDate: weatherData?.date, imageSource: '', imageFailed: true }
+  addHeroImageError(city.city_name)
+}
 
 function clearRoutePlayback() {
   window.clearTimeout(departureTimer)
@@ -70,17 +119,23 @@ async function selectCity(cityId, { restartPlayback = true } = {}) {
   if (cityChanged) {
     selectedCityId.value = cityId
     weather.value = null
-    heroImageFailed.value = false
   }
   if (restartPlayback) scheduleRoutePlayback()
   if (!cityChanged && weather.value) return
 
   const requestId = ++weatherRequestId
+  heroLoading.value = true
   try {
     const weatherData = await api.getWeather(cityId)
-    if (requestId === weatherRequestId && selectedCityId.value === cityId) weather.value = weatherData
+    if (!isCurrentWeatherRequest(requestId, cityId)) return
+    weather.value = weatherData
+    await prepareHero(destination, weatherData, requestId)
   } catch (exception) {
-    if (requestId === weatherRequestId && selectedCityId.value === cityId) error.value = exception.message
+    if (!isCurrentWeatherRequest(requestId, cityId)) return
+    error.value = exception.message
+    await prepareHero(destination, null, requestId, { fallbackOnly: true })
+  } finally {
+    if (isCurrentWeatherRequest(requestId, cityId)) heroLoading.value = false
   }
 }
 
@@ -136,7 +191,10 @@ async function refresh() {
         .catch((exception) => ({ data: null, error: exception.message })),
     ])
     profile.value = profileData
-    if (requestId === weatherRequestId && selectedCityId.value === refreshCityId) weather.value = weatherData
+    if (isCurrentWeatherRequest(requestId, refreshCityId)) {
+      weather.value = weatherData
+      await prepareHero(selectedCity.value, weatherData, requestId)
+    }
     if (adviceResult.data) travelAdvice.value = adviceResult.data
     adviceError.value = adviceResult.error
   } catch (exception) {
@@ -159,15 +217,6 @@ function handleVisibilityChange() {
   else if (autoplayEnabled.value) scheduleRoutePlayback()
 }
 
-function useFallbackImage(event) {
-  if (!heroImageFailed.value && event.target.src !== new URL(visual.value.fallbackImage, window.location.origin).href) {
-    heroImageFailed.value = true
-    event.target.src = visual.value.fallbackImage
-    return
-  }
-  event.target.hidden = true
-}
-
 onMounted(() => {
   document.addEventListener('visibilitychange', handleVisibilityChange)
   load()
@@ -183,15 +232,28 @@ onBeforeUnmount(() => {
     <div v-if="error && !route" class="error-state"><p>{{ error }}</p><button @click="load">重新加载</button></div>
     <template v-else-if="!loading && route && profile">
       <section id="top" class="city-stage">
-        <section class="hero" :key="selectedCityId" :style="{ background: visual.gradient }" aria-live="polite">
-          <img class="hero-image" :src="visual.image" :alt="`${selectedCity?.city_name}当地天气景象`" @error="useFallbackImage">
+        <section class="hero" :style="{ background: visual.gradient }">
+          <Transition name="hero-image">
+            <img v-if="readyHero?.imageSource" :key="readyHero.imageSource" class="hero-image" :src="readyHero.imageSource" :alt="`${displayedCity?.city_name}当地天气景象`">
+          </Transition>
           <div class="hero-wash"></div>
           <div class="hero-copy" :class="`tone-${visual.textTone}`">
-            <p class="eyebrow">第 {{ String(selectedCity?.station_order || 1).padStart(2, '0') }} 站 · {{ weather?.date || '读取观测中' }}</p>
-            <h1>{{ selectedCity?.city_name }}</h1>
+            <p class="eyebrow">第 {{ String(displayedCity?.station_order || 1).padStart(2, '0') }} 站 · {{ displayedDate }}</p>
+            <h1>{{ displayedCity?.city_name }}</h1>
             <p class="city-phrase">{{ visual.phrase }}</p>
-            <p class="hero-poem">{{ heroImageFailed ? visual.fallbackPoem : visual.poem }}</p>
+            <p class="hero-poem">{{ readyHero?.imageFailed ? visual.fallbackPoem : visual.poem }}</p>
           </div>
+          <Transition name="hero-journey">
+            <div v-if="heroLoading" class="hero-journey" role="status" aria-live="polite">
+              <p>正在抵达</p>
+              <strong>「{{ selectedCity?.city_name }}」</strong>
+              <div class="journey-track" aria-hidden="true">
+                <i class="journey-station journey-station-start"></i>
+                <i class="journey-station journey-station-end"></i>
+                <span class="journey-train"><b></b><b></b></span>
+              </div>
+            </div>
+          </Transition>
         </section>
         <header class="site-header">
           <a class="brand" href="#top">Cto<span>N</span></a>
