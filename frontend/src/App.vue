@@ -238,7 +238,15 @@ onBeforeUnmount(() => {
             <p class="route-title">重庆北 → 南京南</p>
             <p class="route-meta">8 STATIONS · 1245 KM · 沿线气象观测</p>
           </div>
-          <button class="refresh-button" :disabled="refreshing" @click="refresh">{{ refreshLabel }}</button>
+          <div class="header-actions">
+            <div class="project-meta">
+              <span>作者：Yule</span>
+              <a href="https://github.com/ChenPP-123/CtoN" target="_blank" rel="noopener noreferrer">
+                GitHub <span aria-hidden="true">↗</span>
+              </a>
+            </div>
+            <button class="refresh-button" :disabled="refreshing" @click="refresh">{{ refreshLabel }}</button>
+          </div>
         </header>
         <section class="hero" :style="{ background: visual.gradient }">
           <Transition name="hero-image">
