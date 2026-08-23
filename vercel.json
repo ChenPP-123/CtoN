@@ -1,12 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["sin1"],
-  "functions": {
-    "backend/main.py": {
-      "maxDuration": 300,
-      "excludeFiles": "{frontend/**,backend/tests/**,docs/**,deploy/**,data/**,.agents/**,.venv/**,.pytest_cache/**,**/__pycache__/**}"
-    }
-  },
   "crons": [
     {
       "path": "/api/v1/internal/daily-update",

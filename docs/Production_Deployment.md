@@ -22,7 +22,7 @@ vercel --version
 1. 在 Vercel 导入仓库，Root Directory 保持仓库根目录。
 2. Framework Preset 选择 FastAPI 或保持自动检测。
 3. `pyproject.toml` 将入口固定为 `backend.main:app`，`.python-version` 固定 3.13。
-4. `vercel.json` 将函数区域设为 `sin1`、最长执行时间设为 300 秒，并注册 `0 22 * * *` Cron。
+4. `vercel.json` 将函数区域设为 `sin1`，并注册 `0 22 * * *` Cron。FastAPI 默认使用 Fluid Compute，Hobby 的默认最长执行时间为 300 秒。
 
 后端生产变量：
 
