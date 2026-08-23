@@ -1,5 +1,7 @@
 # CtoN 数据库设计文档
 
+> 本文描述当前数据库职责和数据流。生产运行状态与待完成的恢复演练记录在 [开发进展与项目状态](Development_Status.md)，结构变更流程见 [生产部署手册](Production_Deployment.md)。
+
 数据库：Neon PostgreSQL
 访问方式：psycopg 直接 SQL，不使用 ORM
 

@@ -1,109 +1,54 @@
 # CtoN
 
-重庆至南京高铁沿线的气象可视化网站。前端展示地图、城市天气、沿线剖面、随机旅途和预设诗句；后端从和风天气更新观测，并使用 DeepSeek 生成全线路旅途建议。
+一趟从重庆到南京的高铁，也是一条穿越天气、地形与城市气质的旅程。
 
-## 生产架构
+**在线访问：<https://cton-frontend.vercel.app>**
 
-同一仓库部署为两个 Vercel Project：
+CtoN（Chongqing to Nanjing）是一款气象数据驱动的高铁旅行可视化网站。它把重庆至南京沿线的八座城市连接在同一张地图上，让访客不必逐个查询城市，也能直观看到一条长距离旅程中的温度、湿度、空气质量和大气状态变化。
 
-- 后端 Project 的 Root Directory 为仓库根目录。FastAPI 作为单个 Python 3.13 Function 运行在新加坡 `sin1`，数据保存在 Neon PostgreSQL 新加坡区。
-- 前端 Project 的 Root Directory 为 `frontend`。浏览器只请求相对路径 `/api/v1` 和 `/_AMapService`，Vercel 将它们同源转发到后端 Project。
+## 你可以在这里看到什么
 
-后端不在冷启动时建表、写种子或启动后台线程。Vercel Cron 每天 UTC 22:00 触发内部更新接口，即北京时间 06:00–06:59 的 Hobby 执行窗口；Hobby 不保证精确到某一分钟。天气先更新，随后按线路生成建议，结果写入 `daily_update_runs`。
+- 在地图上浏览重庆至南京的高铁线路与八个城市站点；
+- 查看每座城市当天的天气、体感温度、湿度和空气质量；
+- 通过沿线剖面比较不同气象要素的空间变化；
+- 随机抵达一座沿线城市，获得一次轻量的气象旅行体验；
+- 阅读与城市天气相呼应的诗句；
+- 获取结合全线路天气生成的当日旅途建议。
 
-## 配置
+## 为什么做 CtoN
 
-后端从仓库根目录 `.env` 读取本地配置；前端只从 `frontend/.env` 读取构建配置。分别复制示例：
+CtoN 的灵感来自一段真实的重庆至南京高铁旅程。接近九小时的行程里，天气、地形和空气状况不断变化，但传统天气应用通常只呈现单个地点。
 
-```bash
-cp .env.example .env
-cp frontend/.env.example frontend/.env
-```
+这个项目尝试回答一个更有旅行感的问题：
 
-生产运行时必须配置：
+> 如果把天气放回一整段旅程中，我们会如何理解沿途城市之间的联系？
 
-```dotenv
-APP_ENV=production
-APP_TIMEZONE=Asia/Shanghai
-DATABASE_URL=postgresql://...-pooler.../cton?sslmode=require
-ADMIN_API_TOKEN=
-CRON_SECRET=
-CORS_ORIGINS=
-QWEATHER_API_KEY=
-QWEATHER_BASE_URL=
-DEEPSEEK_API_KEY=
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-v4-flash
-AMAP_SECURITY_JS_CODE=
-```
+## 数据如何更新
 
-前端生产变量：
+天气与空气质量来自和风天气，地图由高德地图提供，全线路旅途建议由 DeepSeek 根据当天沿线观测生成。网站每天自动更新一次；页面展示的是旅行探索信息，不应替代专业气象预警或出行安全决策。
 
-```dotenv
-BACKEND_ORIGIN=https://your-backend-project.vercel.app
-VITE_AMAP_JS_KEY=
-```
+## 当前状态
 
-`ADMIN_API_TOKEN` 和 `CRON_SECRET` 必须互不相同且至少 32 个字符。生产流量经同源 rewrite 时 `CORS_ORIGINS` 可为空；若配置，只接受 HTTPS 正式域名。`DATABASE_MIGRATION_URL` 仅供本地初始化使用，不应保存到 Vercel Function 环境。`AMAP_WEB_SERVICE_KEY` 仅为可选维护配置。
+CtoN 已完成第一版开发并上线。公开访客只需通过上方唯一入口访问网站，不需要账号，也不会接触管理接口或后台密钥。
 
-## 数据库初始化
+当前版本聚焦重庆至南京这一条线路和八个城市。后续会继续改善内容表达、移动端体验、数据稳定性与长期运行能力。详细进展见 [开发进展与项目状态](docs/Development_Status.md)。
 
-先用 Neon 非池化直连地址显式建表并写入固定线路配置：
+## 技术概览
 
-```bash
-source .venv/bin/activate
-DATABASE_MIGRATION_URL='postgresql://...' python -m backend.database
-```
+- 前端：Vue 3、Vite、ECharts、高德地图 JavaScript API
+- 后端：FastAPI、Python 3.13
+- 数据库：Neon PostgreSQL
+- 数据与模型：和风天气、DeepSeek
+- 部署：同一 GitHub 仓库中的两个 Vercel Project
 
-命令可重复执行，只更新固定线路、城市和站点配置，不覆盖真实天气或旅行建议。当前没有 SQLite 生产数据迁移路径；旧本地数据库直接废弃。
+浏览器始终通过前端域名访问业务 API；数据库、第三方安全密钥和管理令牌只存在于后端。
 
-## 本地运行
+## 开发者入口
 
-准备 PostgreSQL 17、Python 3.13 和 Node.js 22，然后：
+- [开发进展与项目状态](docs/Development_Status.md)
+- [生产部署与持续开发流程](docs/Production_Deployment.md)
+- [API 接口文档](docs/CtoN_API_Interface.md)
+- [数据库设计](docs/CtoN_Database_Design.md)
+- [项目设计背景](docs/CtoN_Project_Design_Document.md)
 
-```bash
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m backend.database
-uvicorn backend.main:app --reload
-```
-
-另一个终端启动前端：
-
-```bash
-cd frontend
-npm ci
-npm run dev
-```
-
-Vite 会将 `/api` 和 `/_AMapService` 代理到 `http://localhost:8000`。地图 JS Key 必须限制允许域名；高德安全密钥只保存在后端并由代理注入。
-
-## 管理接口
-
-公网前端只调用 GET。管理员可从可信终端手动触发：
-
-```bash
-curl -X POST https://backend.example/api/v1/weather/refresh \
-  -H "Authorization: Bearer ${ADMIN_API_TOKEN}"
-curl -X POST https://backend.example/api/v1/routes/1/travel-advice \
-  -H "Authorization: Bearer ${ADMIN_API_TOKEN}"
-```
-
-Cron 使用独立的 `GET /api/v1/internal/daily-update` 和 `CRON_SECRET`。所有第三方更新共用 PostgreSQL 过期租约；并发手动更新返回业务码 `40901`，函数异常退出后租约会自动过期。
-
-## 验证
-
-测试数据库名必须以 `_test` 结尾：
-
-```bash
-source .venv/bin/activate
-TEST_DATABASE_URL=postgresql:///cton_test pytest -q
-pip check
-
-cd frontend
-npm test
-BACKEND_ORIGIN=https://backend.example npm run build
-npm audit --omit=dev --audit-level=high
-```
-
-完整部署、恢复演练和上线验收见 [Vercel 部署手册](docs/Production_Deployment.md)。生产恢复依赖 Neon 当前套餐提供的恢复窗口，不再使用 ECS、Nginx、systemd、SQLite 备份或阿里云 OSS。
+开始修改前请先阅读 [AGENTS.md](AGENTS.md)。

@@ -1,5 +1,7 @@
 # CtoN 项目设计文档
 
+> 本文保留项目背景、产品方向和早期功能构想。项目第一版已经上线；当前实现与验证状态以 [开发进展与项目状态](Development_Status.md) 为准，发布流程以 [生产部署手册](Production_Deployment.md) 为准。
+
 版本：1.0\
 项目名称：CtoN（Chongqing to Nanjing）\
 项目类型：气象数据驱动的高铁旅行可视化系统\

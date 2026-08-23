@@ -1,11 +1,13 @@
 # CtoN API 接口文档
 
-版本：1.0  
-项目：CtoN（Chongqing to Nanjing）  
-后端：Python + FastAPI  
-数据源：和风天气 API（暂定）  
-地图：高德地图 API（暂定）  
-AI：DeepSeek API（暂定）
+> 本文描述当前 API 合约。生产状态与实际验收结果见 [开发进展与项目状态](Development_Status.md)。
+
+- 版本：1.0
+- 项目：CtoN（Chongqing to Nanjing）
+- 后端：Python + FastAPI
+- 数据源：和风天气 API
+- 地图：高德地图 JavaScript API
+- AI：DeepSeek API
 
 ## 1. 接口目标
 
@@ -30,10 +32,10 @@ AI：DeepSeek API（暂定）
 http://localhost:8000/api/v1
 ```
 
-生产环境示例：
+生产访客同源地址：
 
 ```text
-https://cton.example.com/api/v1
+https://cton-frontend.vercel.app/api/v1
 ```
 
 所有接口使用 HTTPS（本地开发除外），请求和响应编码为 UTF-8。
@@ -465,7 +467,7 @@ Authorization: Bearer <CRON_SECRET>
 
 ### 5.1 和风天气 API
 
-暂定用于天气和空气质量数据：
+用于天气和空气质量数据：
 
 - 后端配置：`QWEATHER_API_KEY`、`QWEATHER_BASE_URL`；
 - 通过 `cities.city_code` 查询城市；
