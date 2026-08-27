@@ -5,7 +5,7 @@
 - 项目第一版已经上线，访客唯一入口为 `https://www.ctonrail.org`；`cton-frontend.vercel.app` 仅作为 Vercel 底层部署和排障域名保留。
 - 同一 GitHub 仓库连接两个 Vercel Project：`cton-backend` 使用仓库根目录，`cton-frontend` 使用 `frontend`。
 - 后端运行于 Vercel FastAPI Python 3.13 Function，数据存储在 Neon PostgreSQL；前端通过同源 rewrite 访问后端。
-- Vercel Cron 路径为 `/api/v1/internal/daily-update`，表达式为 `0 22 * * *`。手动生产运行和同日幂等跳过已经验证。
+- Vercel Cron 使用 morning、afternoon、evening 三个独立路径，表达式分别为 `0 23 * * *`、`0 6 * * *`、`0 13 * * *`。morning 手动生产运行和同日同时段幂等跳过已经验证；旧 `/api/v1/internal/daily-update` 仅作为过渡兼容入口保留。
 - 当前状态、已验证证据和未完成的运维观察统一记录在 `docs/Development_Status.md`；首次部署、持续开发、发布和回滚流程见 `docs/Production_Deployment.md`。
 
 生产状态会变化。新会话涉及部署或线上问题时，先读取上述文档，再用只读检查确认当前 Git、Vercel 和生产接口状态，不把文档中的历史记录当作实时结果。
