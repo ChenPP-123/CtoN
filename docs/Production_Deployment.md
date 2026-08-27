@@ -36,7 +36,7 @@ vercel --version
 1. 在 Vercel 导入仓库，Root Directory 保持仓库根目录。
 2. `vercel.json` 将 Framework Preset 明确固定为 FastAPI。
 3. `pyproject.toml` 将入口固定为 `backend.main:app`，`.python-version` 固定 3.13。
-4. `vercel.json` 将函数区域设为 `sin1`，并注册 `0 22 * * *` Cron。FastAPI 默认使用 Fluid Compute，Hobby 的默认最长执行时间为 300 秒。
+4. `vercel.json` 将函数区域设为 `sin1`，并为 morning、afternoon、evening 分别注册 `0 23 * * *`、`0 6 * * *`、`0 13 * * *` Cron。FastAPI 默认使用 Fluid Compute，Hobby 的默认最长执行时间为 300 秒。
 
 后端生产变量：
 
@@ -111,14 +111,16 @@ VITE_AMAP_JS_KEY=
 
 ## 5. Cron 与限流
 
-Vercel 每天 UTC 22:00 请求：
+Vercel 每天按三个独立 Cron 请求：
 
 ```text
-GET /api/v1/internal/daily-update
+UTC 23:00  GET /api/v1/internal/scheduled-update/morning
+UTC 06:00  GET /api/v1/internal/scheduled-update/afternoon
+UTC 13:00  GET /api/v1/internal/scheduled-update/evening
 Authorization: Bearer <CRON_SECRET>
 ```
 
-这对应北京时间 06:00–06:59 的 Hobby 执行窗口，不承诺精确到 06:30。返回约定：
+这对应北京时间约 07:00–07:59、14:00–14:59、21:00–21:59 的 Hobby 执行窗口，不承诺精确分钟。三个任务均刷新八城实况、空气质量、大气稳定度和路线建议；morning 额外读取八城当日昼夜预报并逐城回退实况。预计每日约 56 次和风调用、3 次 DeepSeek 调用，建议格式重试时 DeepSeek 最多 6 次。返回约定：
 
 - `200`：成功或当天已执行；
 - `207`：部分城市或线路失败；
@@ -133,7 +135,7 @@ Authorization: Bearer <CRON_SECRET>
 - 前端浏览器地址保持同源，请求未暴露后端凭据。
 - 无令牌管理员 POST 返回 `401`；正确令牌可更新天气和建议。
 - Vercel Cron 列表只有计划中的每日任务。
-- `daily_update_runs` 当天只有一条记录；重复请求不会再次调用第三方 API。
+- `scheduled_update_runs` 当天最多有三个不同时段记录；同一时段重复请求不会再次调用第三方 API。
 - Vercel 日志中没有超时、数据库连接耗尽或密钥输出。
 - `/docs`、`/redoc`、`/openapi.json` 在生产环境不可用。
 - 从中国内地网络分别验证静态资源、API、地图和第三方更新链路。Vercel 没有中国内地计算区域，必须以实测结果为准。

@@ -29,7 +29,12 @@ const profile = {
     wind_speed_ms: 2 + index,
   })),
 }
-const advice = { content: '沿线天气宜人，请适时补水。', travel_date: '2026-08-04', is_stale: false }
+const advice = {
+  content: '沿线天气宜人，请适时补水。',
+  travel_date: '2026-08-04',
+  generated_at: '2026-08-04T08:25:00Z',
+  is_stale: false,
+}
 
 function weatherFor(cityId) {
   const station = route.stations.find((item) => item.city_id === cityId)
@@ -185,6 +190,22 @@ describe('核心观测交互', () => {
     expect(apiMocks.getTravelAdvice).toHaveBeenLastCalledWith(1)
     expect(wrapper.get('.travel-advice').text()).toContain(refreshedAdvice.content)
     expect(wrapper.get('.refresh-button').text()).toBe('刷新数据')
+  })
+
+  it('按北京时间显示当天和历史建议的更新时间', async () => {
+    wrapper = await mountLoadedApp()
+    expect(wrapper.get('.travel-advice small').text()).toBe('更新于 16:25')
+
+    apiMocks.getTravelAdvice.mockResolvedValue({
+      ...advice,
+      travel_date: '2026-08-03',
+      generated_at: '2026-08-03T23:05:00Z',
+      is_stale: true,
+    })
+    await wrapper.get('.refresh-button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.travel-advice small').text()).toBe('上次更新 · 2026-08-04 07:05')
   })
 
   it('建议读取失败时保留原建议并显示错误', async () => {

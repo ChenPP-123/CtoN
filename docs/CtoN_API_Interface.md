@@ -446,11 +446,15 @@ Authorization: Bearer <CRON_SECRET>
 
 路线不存在返回 `404`；当天没有任何可用观测返回 `409`；DeepSeek 未配置、超时或输出不合格返回 `503`。
 
-### 4.10 内部每日更新
+### 4.10 内部时段更新
 
-#### `GET /internal/daily-update`
+#### `GET /internal/scheduled-update/{run_slot}`
 
-只供 Vercel Cron 调用，必须携带 `CRON_SECRET` Bearer Token。请求先领取 PostgreSQL 更新租约和当日唯一执行记录，天气更新完成后再生成路线建议。重复触发当天已领取的任务不会重复消耗第三方 API。
+只供 Vercel Cron 调用，必须携带 `CRON_SECRET` Bearer Token。`run_slot` 只接受 `morning`、`afternoon`、`evening`。请求先领取 PostgreSQL 更新租约和当日时段执行记录，天气更新完成后再生成路线建议。重复触发同一天同一时段不会重复消耗第三方 API，不同时段可分别执行。
+
+上午建议优先使用逐城当日昼夜预报，并补充可用的当前 AQI；单城预报失败时回退到当天最新实况。下午和夜间只使用当天最新实况，并携带真实观测时间。至少一个城市有有效输入时即可尝试生成建议。
+
+旧 `GET /internal/daily-update` 继续作为过渡兼容入口，并按 `morning` 语义执行；生产 Cron 已稳定切换后再评估移除。
 
 | HTTP 状态 | 含义 |
 |---:|---|
@@ -471,7 +475,8 @@ Authorization: Bearer <CRON_SECRET>
 
 - 后端配置：`QWEATHER_API_KEY`、`QWEATHER_BASE_URL`；
 - 通过 `cities.city_code` 查询城市；
-- 获取当前天气、空气质量，以及稳定度判级所需的观测时间、风速和总云量；
+- 三个时段均获取当前天气、空气质量，以及稳定度判级所需的观测时间、风速和总云量；
+- 上午按城市经纬度额外获取当日昼夜预报，规范化最高/最低温、昼夜天气、降水概率、风、湿度和紫外线指数；
 - 统一转换为 `weather_observations` 和 `air_quality_observations`；
 - 保存 `source = "qweather"` 和必要的 `raw_payload_json`；
 - 请求超时建议 5 秒，失败时不覆盖数据库中已有有效数据。
@@ -499,7 +504,8 @@ Authorization: Bearer <CRON_SECRET>
 
 - 后端配置：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`；
 - 天气刷新接口本身不调用 DeepSeek；管理员手动触发建议接口或后端每日任务时才生成路线建议；
-- 输入只使用已保存的当天路线天气快照，输出为 50–100 个汉字的单段建议，不合格时重试一次；
+- 上午输入优先使用当日预报并逐城回退到实况，下午和夜间只使用当天实况；Prompt 明确区分预报与实况，禁止把预测描述成已发生事实；
+- 输出为 50–100 个汉字的单段建议，不合格时重试一次；
 - 生成成功后写入 `travel_reports`，记录模型名、Prompt 哈希、生成时间和来源快照；
 - AI 超时、失败或格式不合格不会影响天气更新，也不会覆盖上一次成功建议；
 - 城市诗句按当前图片从前端静态注册表读取，不经过 API。
@@ -539,8 +545,8 @@ AI Prompt 不通过前端传入，避免用户覆盖系统约束或扩大生成�
 - 预设诗句随静态资源缓存；路线建议按日期保存在数据库中；
 - 后端每日任务更新数据后，前端下次请求自然获得最新快照；
 - 前端“刷新数据”并行调用天气、剖面和建议三个 GET，不触发任何外部 API 消耗；
-- Vercel Cron 每天 UTC 22:00 触发；Hobby 在北京时间 06:00–06:59 的窗口内启动，不保证精确分钟；
-- 自动任务失败后保留已有数据并记录执行结果，当天不自动重试；
+- Vercel Cron 每天 UTC 23:00、06:00、13:00 分别触发 morning、afternoon、evening；Hobby 对应北京时间约 07:00–07:59、14:00–14:59、21:00–21:59，不保证精确分钟；
+- 自动任务失败后保留已有数据并记录执行结果，同一天同一时段不自动重试；
 - 前端不使用 `raw_payload_json`，也不根据外部 API 返回时间判断新旧。
 
 ### 6.5 幂等和并发
@@ -549,7 +555,7 @@ AI Prompt 不通过前端传入，避免用户覆盖系统约束或扩大生成�
 - `POST /routes/{route_id}/travel-advice` 按 `(route_id, travel_date)` 覆盖当天建议；
 - 后端使用数据库唯一约束防止同一天重复天气快照和报告；
 - Cron、天气刷新和建议生成共用 PostgreSQL 过期租约；未取得租约时返回 `40901`，不得并发调用第三方服务；
-- `daily_update_runs.run_date` 唯一，保证重复 Cron 请求不会重复调用第三方服务。
+- `scheduled_update_runs` 的 `(run_date, run_slot)` 唯一，保证同一时段重复 Cron 请求不会重复调用第三方服务。
 
 ### 6.6 安全约定
 

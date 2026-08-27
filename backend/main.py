@@ -7,6 +7,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +20,7 @@ from .daily_update import (
     generate_travel_advice_now,
     refresh_weather_now,
     run_daily_update,
+    run_scheduled_update,
 )
 from .database import connect
 from .external.amap_api import AMapError, forward_sdk_request
@@ -301,8 +303,24 @@ def refresh_weather(request: Request):
 )
 def daily_update(request: Request, http_response: Response):
     result = run_daily_update()
-    http_response.status_code = {
-        "partial": 207,
-        "failed": 500,
-    }.get(result["status"], 200)
+    http_response.status_code = _scheduled_update_status_code(result["status"])
     return response(result, request)
+
+
+@app.get(
+    "/api/v1/internal/scheduled-update/{run_slot}",
+    dependencies=[Depends(require_cron_secret)],
+    include_in_schema=False,
+)
+def scheduled_update(
+    run_slot: Literal["morning", "afternoon", "evening"],
+    request: Request,
+    http_response: Response,
+):
+    result = run_scheduled_update(run_slot)
+    http_response.status_code = _scheduled_update_status_code(result["status"])
+    return response(result, request)
+
+
+def _scheduled_update_status_code(status: str) -> int:
+    return {"partial": 207, "failed": 500}.get(status, 200)

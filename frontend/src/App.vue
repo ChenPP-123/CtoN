@@ -31,9 +31,31 @@ const displayedDate = computed(() => readyHero.value?.weatherDate || '读取观�
 const visual = computed(() => readyHero.value?.visual || visualForCity(selectedCity.value?.city_name, weather.value?.weather?.text, weather.value?.date))
 const themeStyle = computed(() => ({ '--theme-primary': visual.value.primary, '--theme-accent': visual.value.accent, '--hero-overlay': visual.value.overlay, '--hero-fallback': visual.value.gradient }))
 const refreshLabel = computed(() => refreshing.value ? '刷新中…' : '刷新数据')
+const adviceUpdatedLabel = computed(() => formatAdviceUpdatedAt(travelAdvice.value))
 let departureTimer
 let arrivalTimer
 let weatherRequestId = 0
+
+function formatAdviceUpdatedAt(advice) {
+  if (!advice?.generated_at) return advice?.travel_date || ''
+  const generatedAt = new Date(advice.generated_at)
+  if (Number.isNaN(generatedAt.getTime())) return advice.travel_date || ''
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(generatedAt).map(({ type, value }) => [type, value]),
+  )
+  const time = `${parts.hour}:${parts.minute}`
+  return advice.is_stale
+    ? `上次更新 · ${parts.year}-${parts.month}-${parts.day} ${time}`
+    : `更新于 ${time}`
+}
 
 function preloadImage(source) {
   return new Promise((resolve, reject) => {
@@ -285,7 +307,7 @@ onBeforeUnmount(() => {
               <div>
                 <span>今日行路建议</span>
                 <small v-if="adviceRefreshing">正在更新</small>
-                <small v-else-if="travelAdvice">{{ travelAdvice.is_stale ? `上次建议 · ${travelAdvice.travel_date}` : travelAdvice.travel_date }}</small>
+                <small v-else-if="travelAdvice">{{ adviceUpdatedLabel }}</small>
               </div>
               <p v-if="travelAdvice">{{ travelAdvice.content }}</p>
               <p v-else-if="adviceRefreshing">正在读取最新路线建议…</p>

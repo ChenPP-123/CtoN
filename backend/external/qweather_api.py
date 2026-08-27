@@ -39,6 +39,20 @@ class CurrentAirQuality:
     raw_payload: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class DailyForecast:
+    forecast_date: str
+    temperature_max_c: float
+    temperature_min_c: float
+    day_weather_text: str
+    night_weather_text: str
+    precipitation_probability_percent: int | None
+    humidity_percent: int | None
+    wind_speed_ms: float | None
+    wind_direction: str | None
+    uv_index: int | None
+
+
 class QWeatherClient:
     def __init__(self, settings: QWeatherSettings) -> None:
         if not settings.is_configured:
@@ -79,6 +93,32 @@ class QWeatherClient:
             pm10_ug_m3=_pollutant_concentration(pollutants.get("pm10")),
             primary_pollutant=_to_optional_text(primary.get("name")) or _to_optional_text(primary.get("code")),
             raw_payload=payload,
+        )
+
+    def get_daily_forecast(self, latitude: float, longitude: float) -> DailyForecast:
+        payload = self._get(
+            f"/weather/v1/daily/{latitude:.2f}/{longitude:.2f}",
+            params={"days": "1", "localTime": "true", "lang": "zh"},
+        )
+        days = payload.get("days")
+        if not isinstance(days, list) or not days or not isinstance(days[0], dict):
+            raise QWeatherError("和风天气响应缺少逐日预报数据")
+        day = days[0]
+        daytime = day.get("daytime") if isinstance(day.get("daytime"), dict) else {}
+        nighttime = day.get("nighttime") if isinstance(day.get("nighttime"), dict) else {}
+        return DailyForecast(
+            forecast_date=_forecast_date(day),
+            temperature_max_c=_measurement_value(day.get("temperatureMax"), "temperatureMax"),
+            temperature_min_c=_measurement_value(day.get("temperatureMin"), "temperatureMin"),
+            day_weather_text=_condition_text(daytime, "daytime.condition"),
+            night_weather_text=_condition_text(nighttime, "nighttime.condition"),
+            precipitation_probability_percent=_maximum_period_percentage(
+                daytime, nighttime, "precipitation", "probability"
+            ),
+            humidity_percent=_average_period_percentage(daytime, nighttime, "humidity"),
+            wind_speed_ms=_maximum_wind_speed(daytime, nighttime),
+            wind_direction=_wind_direction(daytime) or _wind_direction(nighttime),
+            uv_index=_to_optional_int(day.get("uvIndexMax")),
         )
 
     def _get(self, path: str, params: dict[str, str]) -> dict[str, Any]:
@@ -153,3 +193,88 @@ def _percentage(value: object) -> int | None:
 
 def _to_optional_text(value: object) -> str | None:
     return str(value) if value not in (None, "") else None
+
+
+def _forecast_date(day: dict[str, Any]) -> str:
+    start_time = _to_optional_text(day.get("forecastStartTime"))
+    if not start_time or len(start_time) < 10:
+        raise QWeatherError("和风天气响应缺少 forecastStartTime")
+    return start_time[:10]
+
+
+def _measurement_value(measurement: object, field_name: str) -> float:
+    if not isinstance(measurement, dict):
+        raise QWeatherError(f"和风天气响应缺少 {field_name}")
+    return _to_float(measurement.get("value"), field_name)
+
+
+def _condition_text(period: dict[str, Any], field_name: str) -> str:
+    condition = period.get("condition")
+    text = condition.get("text") if isinstance(condition, dict) else None
+    if not text:
+        raise QWeatherError(f"和风天气响应缺少 {field_name}")
+    return str(text)
+
+
+def _fraction_to_percent(value: object) -> int | None:
+    fraction = _to_optional_float(value)
+    if fraction is None or not 0 <= fraction <= 1:
+        return None
+    return round(fraction * 100)
+
+
+def _maximum_period_percentage(
+    daytime: dict[str, Any],
+    nighttime: dict[str, Any],
+    container_name: str,
+    field_name: str,
+) -> int | None:
+    percentages = []
+    for period in (daytime, nighttime):
+        container = period.get(container_name)
+        value = container.get(field_name) if isinstance(container, dict) else None
+        percentage = _fraction_to_percent(value)
+        if percentage is not None:
+            percentages.append(percentage)
+    return max(percentages, default=None)
+
+
+def _average_period_percentage(
+    daytime: dict[str, Any], nighttime: dict[str, Any], field_name: str
+) -> int | None:
+    percentages = [
+        percentage
+        for percentage in (
+            _fraction_to_percent(daytime.get(field_name)),
+            _fraction_to_percent(nighttime.get(field_name)),
+        )
+        if percentage is not None
+    ]
+    return round(sum(percentages) / len(percentages)) if percentages else None
+
+
+def _wind_speed(period: dict[str, Any]) -> float | None:
+    wind = period.get("wind")
+    speed = wind.get("speed") if isinstance(wind, dict) else None
+    if not isinstance(speed, dict):
+        return None
+    value = _to_optional_float(speed.get("value"))
+    if value is None:
+        return None
+    unit = str(speed.get("unit") or "m/s").lower()
+    return round(value / 3.6, 1) if unit in {"km/h", "kph"} else round(value, 1)
+
+
+def _maximum_wind_speed(
+    daytime: dict[str, Any], nighttime: dict[str, Any]
+) -> float | None:
+    speeds = [speed for speed in (_wind_speed(daytime), _wind_speed(nighttime)) if speed is not None]
+    return max(speeds, default=None)
+
+
+def _wind_direction(period: dict[str, Any]) -> str | None:
+    wind = period.get("wind")
+    direction = wind.get("direction") if isinstance(wind, dict) else None
+    if not isinstance(direction, dict):
+        return None
+    return _to_optional_text(direction.get("compass"))

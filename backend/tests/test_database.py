@@ -1,6 +1,7 @@
 import os
 
 import pytest
+import psycopg
 
 from backend.database import (
     initialize_database,
@@ -41,6 +42,26 @@ def test_schema_and_fixed_seed_are_repeatable_without_overwriting_observations()
 
     assert observation == {"temperature_c": 12.5, "source": "qweather"}
     assert station_count == 8
+
+
+def test_scheduled_update_run_composite_key_allows_three_slots_only_once() -> None:
+    with open_database() as connection:
+        for run_slot in ("morning", "afternoon", "evening"):
+            connection.execute(
+                """INSERT INTO scheduled_update_runs (
+                       run_date, run_slot, trigger, status, started_at
+                   ) VALUES ('2026-08-27', %s, 'cron', 'running', '2026-08-27T00:00:00Z')""",
+                (run_slot,),
+            )
+
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        with open_database() as connection:
+            connection.execute(
+                """INSERT INTO scheduled_update_runs (
+                       run_date, run_slot, trigger, status, started_at
+                   ) VALUES ('2026-08-27', 'morning', 'cron', 'running',
+                             '2026-08-27T01:00:00Z')"""
+            )
 
 
 def test_open_database_rolls_back_failed_transactions() -> None:

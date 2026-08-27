@@ -287,11 +287,15 @@ def test_admin_token_preserves_successful_advice_generation(
 def test_cron_endpoint_requires_its_own_bearer_secret(
     client: TestClient, headers: dict[str, str]
 ) -> None:
-    cron_response = client.get("/api/v1/internal/daily-update", headers=headers)
+    for path in (
+        "/api/v1/internal/daily-update",
+        "/api/v1/internal/scheduled-update/morning",
+    ):
+        cron_response = client.get(path, headers=headers)
 
-    assert cron_response.status_code == 401
-    assert cron_response.json()["code"] == 40100
-    assert cron_response.headers["WWW-Authenticate"] == "Bearer"
+        assert cron_response.status_code == 401
+        assert cron_response.json()["code"] == 40100
+        assert cron_response.headers["WWW-Authenticate"] == "Bearer"
 
 
 @pytest.mark.parametrize(
@@ -316,3 +320,37 @@ def test_cron_endpoint_maps_update_status(
 
     assert cron_response.status_code == expected_status_code
     assert cron_response.json()["data"]["status"] == status
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_status_code"),
+    [("succeeded", 200), ("skipped", 200), ("partial", 207), ("failed", 500)],
+)
+def test_scheduled_endpoint_maps_update_status(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    cron_headers: dict[str, str],
+    status: str,
+    expected_status_code: int,
+) -> None:
+    monkeypatch.setattr(
+        "backend.main.run_scheduled_update",
+        lambda run_slot: {"run_date": "2026-08-07", "run_slot": run_slot, "status": status},
+    )
+
+    response = client.get(
+        "/api/v1/internal/scheduled-update/evening", headers=cron_headers
+    )
+
+    assert response.status_code == expected_status_code
+    assert response.json()["data"]["run_slot"] == "evening"
+
+
+def test_scheduled_endpoint_rejects_invalid_slot(
+    client: TestClient, cron_headers: dict[str, str]
+) -> None:
+    response = client.get(
+        "/api/v1/internal/scheduled-update/midnight", headers=cron_headers
+    )
+
+    assert response.status_code == 422

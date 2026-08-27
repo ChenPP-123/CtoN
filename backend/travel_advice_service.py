@@ -19,22 +19,28 @@ class RouteWeatherUnavailableError(RuntimeError):
     """The route has no observations for today."""
 
 
-def generate_travel_advice(connection: DatabaseConnection, route_id: int) -> dict[str, Any]:
+def generate_travel_advice(
+    connection: DatabaseConnection,
+    route_id: int,
+    *,
+    run_slot: str = "manual",
+    forecasts: dict[int, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     route = connection.execute("SELECT id, name FROM routes WHERE id = %s", (route_id,)).fetchone()
     if not route:
         raise LookupError("路线不存在")
 
     travel_date = current_date().isoformat()
-    snapshots = _get_route_snapshots(connection, route_id, travel_date)
-    available_snapshots = [snapshot for snapshot in snapshots if snapshot["weather_observation_id"] is not None]
-    if not available_snapshots:
-        raise RouteWeatherUnavailableError("今天还没有可用于生成路线建议的天气观测")
+    observations = _get_route_observations(connection, route_id, travel_date)
+    advice_inputs = _build_advice_inputs(observations, run_slot, forecasts or {})
+    if not advice_inputs:
+        raise RouteWeatherUnavailableError("今天还没有可用于生成路线建议的天气数据")
 
     settings = get_deepseek_settings()
-    prompt = _advice_prompt(route["name"], travel_date, snapshots)
+    prompt = _advice_prompt(route["name"], travel_date, advice_inputs)
     content = _generate_valid_advice(DeepSeekClient(settings), prompt)
     generated_at = datetime.now(timezone.utc).isoformat()
-    source_snapshot_ids = [snapshot["weather_observation_id"] for snapshot in available_snapshots]
+    source_snapshot = {"run_slot": run_slot, "sources": advice_inputs}
     connection.execute(
         """INSERT INTO travel_reports (
                route_id, travel_date, content, model_name, prompt_hash, generated_at, source_snapshot_json
@@ -52,7 +58,7 @@ def generate_travel_advice(connection: DatabaseConnection, route_id: int) -> dic
             settings.model,
             hashlib.sha256(prompt.encode()).hexdigest(),
             generated_at,
-            json.dumps(source_snapshot_ids),
+            json.dumps(source_snapshot, ensure_ascii=False, sort_keys=True),
         ),
     )
     saved_advice = get_latest_travel_advice(connection, route_id)
@@ -61,12 +67,12 @@ def generate_travel_advice(connection: DatabaseConnection, route_id: int) -> dic
     return saved_advice
 
 
-def _get_route_snapshots(
+def _get_route_observations(
     connection: DatabaseConnection, route_id: int, travel_date: str
 ) -> list[DatabaseRow]:
     return connection.execute(
-        """SELECT rs.station_order, rs.station_name, c.name AS city_name,
-                  w.id AS weather_observation_id, w.temperature_c, w.feels_like_c,
+        """SELECT rs.station_order, rs.station_name, c.id AS city_id, c.name AS city_name,
+                  w.id AS weather_observation_id, w.observed_at, w.temperature_c, w.feels_like_c,
                   w.weather_text, w.humidity_percent, w.wind_speed_ms,
                   w.wind_direction, w.visibility_km, aq.aqi
            FROM route_stations rs
@@ -77,6 +83,49 @@ def _get_route_snapshots(
            WHERE rs.route_id = %s ORDER BY rs.station_order""",
         (travel_date, route_id),
     ).fetchall()
+
+
+def _build_advice_inputs(
+    observations: list[DatabaseRow],
+    run_slot: str,
+    forecasts: dict[int, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    inputs: list[dict[str, Any]] = []
+    for observation in observations:
+        forecast = forecasts.get(observation["city_id"]) if run_slot == "morning" else None
+        if forecast:
+            inputs.append(
+                {
+                    "city_id": observation["city_id"],
+                    "city_name": observation["city_name"],
+                    "station_name": observation["station_name"],
+                    "source_type": "forecast",
+                    **forecast,
+                    "aqi": observation["aqi"],
+                }
+            )
+            continue
+        if observation["weather_observation_id"] is None:
+            continue
+        inputs.append(
+            {
+                "city_id": observation["city_id"],
+                "city_name": observation["city_name"],
+                "station_name": observation["station_name"],
+                "source_type": "observation",
+                "weather_observation_id": observation["weather_observation_id"],
+                "observed_at": observation["observed_at"],
+                "temperature_c": observation["temperature_c"],
+                "feels_like_c": observation["feels_like_c"],
+                "weather_text": observation["weather_text"],
+                "humidity_percent": observation["humidity_percent"],
+                "wind_speed_ms": observation["wind_speed_ms"],
+                "wind_direction": observation["wind_direction"],
+                "visibility_km": observation["visibility_km"],
+                "aqi": observation["aqi"],
+            }
+        )
+    return inputs
 
 
 def _generate_valid_advice(client: DeepSeekClient, prompt: str) -> str:
@@ -103,28 +152,49 @@ def _revision_prompt(original_prompt: str, draft: str, validation_error: str) ->
     )
 
 
-def _advice_prompt(route_name: str, travel_date: str, snapshots: list[DatabaseRow]) -> str:
-    observations = []
-    for snapshot in snapshots:
-        if snapshot["weather_observation_id"] is None:
-            observations.append(f"{snapshot['station_name']}：暂无今日观测")
-            continue
-        observations.append(
-            f"{snapshot['station_name']}：{snapshot['weather_text']}，"
-            f"{snapshot['temperature_c']}°C，体感{snapshot['feels_like_c'] or '暂无'}°C，"
-            f"湿度{snapshot['humidity_percent']}%，{snapshot['wind_direction'] or '风向暂无'}"
-            f"{snapshot['wind_speed_ms'] or '暂无'}m/s，能见度{snapshot['visibility_km'] or '暂无'}km，"
-            f"AQI {snapshot['aqi'] if snapshot['aqi'] is not None else '暂无'}"
-        )
+def _advice_prompt(
+    route_name: str, travel_date: str, advice_inputs: list[dict[str, Any]]
+) -> str:
+    weather_lines = [_weather_input_line(item) for item in advice_inputs]
     return "\n".join(
         [
-            "请根据以下高铁沿线当天观测，写一段可执行的中文旅途建议。",
+            "请根据以下高铁沿线天气数据，写一段可执行的中文旅途建议。",
             "正文硬性限制为50至100个汉字，以65至85个汉字为目标，写成一个自然段中的2至3个完整句子。",
             "必须以。！或？收尾；最后一句必须给出完整、可执行的动作，不能以并、及时、定时、注意等尚需补充宾语的表达草率结束。",
             "只输出正文，不要标题、列表、Markdown或免责声明；不要通过截短句子满足字数。",
             "优先概括沿线温差、降雨和雨具需求、空气质量、防晒补水；不要虚构缺失数据。",
+            "标注为预报的数据只代表可能发生的情况，必须使用预计、可能等措辞，禁止描述成已经发生的事实；实况可按其真实观测时间描述。",
             f"路线：{route_name}",
             f"日期：{travel_date}",
-            *observations,
+            *weather_lines,
         ]
     )
+
+
+def _weather_input_line(weather_input: dict[str, Any]) -> str:
+    if weather_input["source_type"] == "forecast":
+        return (
+            f"{weather_input['station_name']}【预报】：白天{weather_input['day_weather_text']}、"
+            f"夜间{weather_input['night_weather_text']}，"
+            f"{weather_input['temperature_min_c']}至{weather_input['temperature_max_c']}°C，"
+            f"最高降水概率{_display(weather_input['precipitation_probability_percent'])}%，"
+            f"湿度{_display(weather_input['humidity_percent'])}%，"
+            f"{weather_input.get('wind_direction') or '风向暂无'}"
+            f"{_display(weather_input.get('wind_speed_ms'))}m/s，"
+            f"紫外线指数{_display(weather_input.get('uv_index'))}，"
+            f"当前AQI {_display(weather_input.get('aqi'))}"
+        )
+    return (
+        f"{weather_input['station_name']}【实况，观测时间{weather_input['observed_at']}】："
+        f"{weather_input['weather_text']}，{weather_input['temperature_c']}°C，"
+        f"体感{_display(weather_input['feels_like_c'])}°C，"
+        f"湿度{weather_input['humidity_percent']}%，"
+        f"{weather_input.get('wind_direction') or '风向暂无'}"
+        f"{_display(weather_input.get('wind_speed_ms'))}m/s，"
+        f"能见度{_display(weather_input.get('visibility_km'))}km，"
+        f"AQI {_display(weather_input.get('aqi'))}"
+    )
+
+
+def _display(value: object) -> object:
+    return value if value is not None else "暂无"

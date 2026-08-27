@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 from .config import get_qweather_settings
@@ -13,13 +14,7 @@ from .time_utils import current_date
 
 def refresh_active_route_weather(connection: DatabaseConnection) -> dict[str, Any]:
     client = QWeatherClient(get_qweather_settings())
-    cities = connection.execute(
-        """SELECT DISTINCT c.id, c.name, c.city_code, c.latitude, c.longitude
-           FROM cities c
-           JOIN route_stations rs ON rs.city_id = c.id
-           JOIN routes r ON r.id = rs.route_id
-           WHERE r.is_active = TRUE ORDER BY c.id"""
-    ).fetchall()
+    cities = _active_cities(connection)
     results: list[dict[str, Any]] = []
     for city in cities:
         try:
@@ -31,6 +26,37 @@ def refresh_active_route_weather(connection: DatabaseConnection) -> dict[str, An
             results.append({"city_name": city["name"], "status": "failed", "reason": str(error)})
     updated_count = sum(result["status"] == "updated" for result in results)
     return {"date": current_date().isoformat(), "updated_count": updated_count, "cities": results}
+
+
+def fetch_active_city_forecasts(connection: DatabaseConnection) -> dict[str, Any]:
+    client = QWeatherClient(get_qweather_settings())
+    cities = _active_cities(connection)
+    forecasts: dict[int, dict[str, Any]] = {}
+    results: list[dict[str, Any]] = []
+    for city in cities:
+        try:
+            forecast = client.get_daily_forecast(city["latitude"], city["longitude"])
+            forecasts[city["id"]] = asdict(forecast)
+            results.append({"city_name": city["name"], "status": "updated"})
+        except QWeatherError as error:
+            results.append(
+                {"city_name": city["name"], "status": "failed", "reason": str(error)}
+            )
+    return {
+        "updated_count": len(forecasts),
+        "cities": results,
+        "forecasts": forecasts,
+    }
+
+
+def _active_cities(connection: DatabaseConnection) -> list[DatabaseRow]:
+    return connection.execute(
+        """SELECT DISTINCT c.id, c.name, c.city_code, c.latitude, c.longitude
+           FROM cities c
+           JOIN route_stations rs ON rs.city_id = c.id
+           JOIN routes r ON r.id = rs.route_id
+           WHERE r.is_active = TRUE ORDER BY c.id"""
+    ).fetchall()
 
 
 def _save_snapshot(

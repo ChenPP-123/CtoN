@@ -12,12 +12,13 @@ import uuid
 from .database import open_database
 from .time_utils import current_date
 from .travel_advice_service import generate_travel_advice
-from .weather_service import refresh_active_route_weather
+from .weather_service import fetch_active_city_forecasts, refresh_active_route_weather
 
 
 logger = logging.getLogger(__name__)
 UPDATE_LEASE_NAME = "external-data-update"
 UPDATE_LEASE_SECONDS = 360
+RUN_SLOTS = ("morning", "afternoon", "evening")
 
 
 class UpdateAlreadyRunningError(RuntimeError):
@@ -71,23 +72,33 @@ def generate_travel_advice_now(route_id: int) -> dict[str, Any]:
 
 
 def run_daily_update() -> dict[str, Any]:
-    """Claim and run today's cron update; a claimed date is not retried."""
+    """Compatibility entry point for the former single daily Cron."""
+    return run_scheduled_update("morning")
+
+
+def run_scheduled_update(run_slot: str) -> dict[str, Any]:
+    """Claim and run one of today's three scheduled update slots."""
+    if run_slot not in RUN_SLOTS:
+        raise ValueError(f"未知更新时段：{run_slot}")
     with update_lease():
         run_date = current_date().isoformat()
-        if not _claim_run(run_date):
-            logger.info("每日更新已跳过：%s 已有执行记录", run_date)
-            return {"run_date": run_date, "status": "skipped"}
-        return _execute_claimed_run(run_date)
+        if not _claim_run(run_date, run_slot):
+            logger.info("时段更新已跳过：%s %s 已有执行记录", run_date, run_slot)
+            return {"run_date": run_date, "run_slot": run_slot, "status": "skipped"}
+        return _execute_claimed_run(run_date, run_slot)
 
 
-def _execute_claimed_run(run_date: str) -> dict[str, Any]:
+def _execute_claimed_run(run_date: str, run_slot: str) -> dict[str, Any]:
     weather_updated_count = 0
     weather_failed_count = 0
+    forecast_updated_count = 0
+    forecast_failed_count = 0
     advice_generated_count = 0
     advice_failed_count = 0
     errors: list[str] = []
+    forecasts: dict[int, dict[str, Any]] = {}
 
-    logger.info("开始每日天气与路线建议更新：%s", run_date)
+    logger.info("开始时段天气与路线建议更新：%s %s", run_date, run_slot)
     try:
         expected_city_count = _active_city_count()
         try:
@@ -105,12 +116,38 @@ def _execute_claimed_run(run_date: str) -> dict[str, Any]:
         except Exception as error:
             weather_failed_count = expected_city_count
             errors.append(f"天气刷新失败：{error}")
-            logger.exception("每日天气刷新失败")
+            logger.exception("时段天气刷新失败")
+
+        if run_slot == "morning":
+            try:
+                with open_database() as connection:
+                    forecast_result = fetch_active_city_forecasts(connection)
+                forecasts = forecast_result["forecasts"]
+                forecast_updated_count = forecast_result["updated_count"]
+                failed_forecasts = [
+                    city
+                    for city in forecast_result["cities"]
+                    if city["status"] == "failed"
+                ]
+                forecast_failed_count = len(failed_forecasts)
+                errors.extend(
+                    f"{city['city_name']}预报获取失败：{city['reason']}"
+                    for city in failed_forecasts
+                )
+            except Exception as error:
+                forecast_failed_count = expected_city_count
+                errors.append(f"预报获取失败：{error}")
+                logger.exception("上午逐日预报获取失败")
 
         for route_id in _active_route_ids():
             try:
                 with open_database() as connection:
-                    generate_travel_advice(connection, route_id)
+                    generate_travel_advice(
+                        connection,
+                        route_id,
+                        run_slot=run_slot,
+                        forecasts=forecasts,
+                    )
                 advice_generated_count += 1
             except Exception as error:
                 advice_failed_count += 1
@@ -120,28 +157,36 @@ def _execute_claimed_run(run_date: str) -> dict[str, Any]:
         status = _run_status(
             weather_updated_count,
             weather_failed_count,
+            forecast_updated_count,
+            forecast_failed_count,
             advice_generated_count,
             advice_failed_count,
         )
     except Exception as error:
         status = "failed"
-        errors.append(f"每日更新异常终止：{error}")
-        logger.exception("每日更新异常终止")
+        errors.append(f"时段更新异常终止：{error}")
+        logger.exception("时段更新异常终止")
 
     _finish_run(
         run_date,
+        run_slot,
         status=status,
         weather_updated_count=weather_updated_count,
         weather_failed_count=weather_failed_count,
+        forecast_updated_count=forecast_updated_count,
+        forecast_failed_count=forecast_failed_count,
         advice_generated_count=advice_generated_count,
         advice_failed_count=advice_failed_count,
         error_summary="\n".join(errors)[:4000] or None,
     )
     return {
         "run_date": run_date,
+        "run_slot": run_slot,
         "status": status,
         "weather_updated_count": weather_updated_count,
         "weather_failed_count": weather_failed_count,
+        "forecast_updated_count": forecast_updated_count,
+        "forecast_failed_count": forecast_failed_count,
         "advice_generated_count": advice_generated_count,
         "advice_failed_count": advice_failed_count,
         "errors": errors,
@@ -151,12 +196,14 @@ def _execute_claimed_run(run_date: str) -> dict[str, Any]:
 def _run_status(
     weather_updated_count: int,
     weather_failed_count: int,
+    forecast_updated_count: int,
+    forecast_failed_count: int,
     advice_generated_count: int,
     advice_failed_count: int,
 ) -> str:
-    if weather_failed_count == 0 and advice_failed_count == 0:
+    if weather_failed_count == 0 and forecast_failed_count == 0 and advice_failed_count == 0:
         return "succeeded"
-    if weather_updated_count == 0 and advice_generated_count == 0:
+    if weather_updated_count == 0 and forecast_updated_count == 0 and advice_generated_count == 0:
         return "failed"
     return "partial"
 
@@ -179,44 +226,52 @@ def _active_route_ids() -> list[int]:
         return [row["id"] for row in rows]
 
 
-def _claim_run(run_date: str) -> bool:
+def _claim_run(run_date: str, run_slot: str) -> bool:
     with open_database() as connection:
         claimed_run = connection.execute(
-            """INSERT INTO daily_update_runs (run_date, trigger, status, started_at)
-               VALUES (%s, 'cron', 'running', %s)
-               ON CONFLICT(run_date) DO NOTHING
+            """INSERT INTO scheduled_update_runs (
+                   run_date, run_slot, trigger, status, started_at
+               ) VALUES (%s, %s, 'cron', 'running', %s)
+               ON CONFLICT(run_date, run_slot) DO NOTHING
                RETURNING run_date""",
-            (run_date, _utc_now()),
+            (run_date, run_slot, _utc_now()),
         ).fetchone()
     return claimed_run is not None
 
 
 def _finish_run(
     run_date: str,
+    run_slot: str,
     *,
     status: str,
     weather_updated_count: int,
     weather_failed_count: int,
+    forecast_updated_count: int,
+    forecast_failed_count: int,
     advice_generated_count: int,
     advice_failed_count: int,
     error_summary: str | None,
 ) -> None:
     with open_database() as connection:
         connection.execute(
-            """UPDATE daily_update_runs
+            """UPDATE scheduled_update_runs
                SET status = %s, finished_at = %s, weather_updated_count = %s,
-                   weather_failed_count = %s, advice_generated_count = %s,
+                   weather_failed_count = %s, forecast_updated_count = %s,
+                   forecast_failed_count = %s, advice_generated_count = %s,
                    advice_failed_count = %s, error_summary = %s
-               WHERE run_date = %s""",
+               WHERE run_date = %s AND run_slot = %s""",
             (
                 status,
                 _utc_now(),
                 weather_updated_count,
                 weather_failed_count,
+                forecast_updated_count,
+                forecast_failed_count,
                 advice_generated_count,
                 advice_failed_count,
                 error_summary,
                 run_date,
+                run_slot,
             ),
         )
 

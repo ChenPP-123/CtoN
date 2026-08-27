@@ -39,7 +39,7 @@ erDiagram
     routes ||--o{ travel_reports : receives
 ```
 
-`daily_update_runs` 按业务日期独立记录 Cron 结果；`operation_leases` 是全局更新互斥状态，不属于具体路线。
+`scheduled_update_runs` 按业务日期和时段记录 Cron 结果；旧 `daily_update_runs` 仅保留已有生产记录和过渡兼容。`operation_leases` 是全局更新互斥状态，不属于具体路线。
 
 ## 4. 表
 
@@ -71,9 +71,15 @@ erDiagram
 
 按线路和业务日期保存 DeepSeek 建议。`(route_id, travel_date)` 唯一；只有模型输出通过校验后才 UPSERT，因此失败不会覆盖最近的有效建议。
 
+新生成记录的 `source_snapshot_json` 是对象，保存 `run_slot` 和实际用于生成建议的规范化城市输入；每项以 `source_type` 区分 `forecast` 与 `observation`，实况包含真实观测时间。旧记录使用的天气观测 ID 数组无需迁移，公开读取接口也不返回该内部字段。
+
+### `scheduled_update_runs`
+
+`(run_date, run_slot)` 为复合主键，`run_slot` 只允许 `morning`、`afternoon`、`evening`，保证同一天三个时段可分别执行且同一时段只领取一次。`trigger` 固定为 `cron`；状态为 `running`、`succeeded`、`partial`、`failed` 或 `skipped`。同时记录天气、上午预报和建议的成功/失败计数及脱敏错误摘要。
+
 ### `daily_update_runs`
 
-`run_date` 为主键，保证同一天的 Cron 请求只领取一次。`trigger` 固定为 `cron`；状态为 `running`、`succeeded`、`partial`、`failed` 或 `skipped`。同时记录天气和建议成功/失败计数及脱敏错误摘要。
+旧单次每日任务的历史运行表。新时段任务不再写入该表，当前保留它是为了向后兼容，既有记录无需迁移。
 
 ### `operation_leases`
 
@@ -87,10 +93,11 @@ erDiagram
 
 ## 5. 事务边界
 
-1. Cron 先取得操作租约，再插入当天 `daily_update_runs`；日期已存在则返回 `skipped`。
+1. Cron 先取得操作租约，再按日期和时段插入 `scheduled_update_runs`；复合主键已存在则返回 `skipped`。
 2. 天气批次在独立事务中刷新。单个城市的供应商错误会记录在结果中，并继续其他城市。
-3. 天气事务提交后，路线建议按线路分别提交。某条线路失败不回滚已保存天气或其他线路建议。
-4. 最后更新 `daily_update_runs` 的状态、计数和错误摘要，并释放租约。
+3. 上午任务逐城读取当日昼夜预报；单城预报失败时，建议输入回退到该城当天最新实况。下午和夜间不请求预报。
+4. 天气事务提交后，路线建议按线路分别提交。某条线路失败不回滚已保存天气或其他线路建议，失败也不会覆盖旧建议。
+5. 最后更新 `scheduled_update_runs` 的状态、计数和错误摘要，并释放租约。
 
 管理员 POST 使用相同租约；占用时返回业务码 `40901`。数据库上下文管理器在成功时提交，在异常时回滚并重新抛出原错误。
 

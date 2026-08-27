@@ -1,9 +1,15 @@
+import json
+
 import pytest
 
 from backend.database import open_database
 from backend.external.deepseek_api import DeepSeekError
 from backend.services import get_latest_travel_advice
-from backend.travel_advice_service import _generate_valid_advice, generate_travel_advice
+from backend.travel_advice_service import (
+    RouteWeatherUnavailableError,
+    _generate_valid_advice,
+    generate_travel_advice,
+)
 from backend.travel_advice_validation import validate_travel_advice
 from backend.time_utils import current_date
 
@@ -60,6 +66,123 @@ def test_failed_generation_preserves_last_successful_advice(monkeypatch) -> None
         saved = get_latest_travel_advice(connection, 1)
     assert saved["content"] == VALID_ADVICE
     assert saved["model_name"] == "old-model"
+
+
+def test_morning_advice_mixes_forecasts_with_observation_fallback(monkeypatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    today = current_date().isoformat()
+    with open_database() as connection:
+        connection.execute("UPDATE weather_observations SET observation_date = %s", (today,))
+
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        "backend.travel_advice_service.DeepSeekClient.generate_text",
+        lambda _client, prompt: prompts.append(prompt) or VALID_ADVICE,
+    )
+    forecast = {
+        "forecast_date": today,
+        "temperature_max_c": 34.0,
+        "temperature_min_c": 25.0,
+        "day_weather_text": "阵雨",
+        "night_weather_text": "多云",
+        "precipitation_probability_percent": 70,
+        "humidity_percent": 75,
+        "wind_speed_ms": 3.0,
+        "wind_direction": "东南风",
+        "uv_index": 8,
+    }
+
+    with open_database() as connection:
+        generate_travel_advice(connection, 1, run_slot="morning", forecasts={1: forecast})
+        snapshot_json = connection.execute(
+            "SELECT source_snapshot_json FROM travel_reports WHERE route_id = 1 AND travel_date = %s",
+            (today,),
+        ).fetchone()["source_snapshot_json"]
+
+    snapshot = json.loads(snapshot_json)
+    assert snapshot["run_slot"] == "morning"
+    assert snapshot["sources"][0]["source_type"] == "forecast"
+    assert snapshot["sources"][1]["source_type"] == "observation"
+    assert "重庆北站【预报】" in prompts[0]
+    assert "万州北站【实况，观测时间" in prompts[0]
+    assert "禁止描述成已经发生的事实" in prompts[0]
+
+
+def test_morning_advice_can_use_forecasts_without_current_observations(monkeypatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    today = current_date().isoformat()
+    monkeypatch.setattr(
+        "backend.travel_advice_service.DeepSeekClient.generate_text",
+        lambda _client, _prompt: VALID_ADVICE,
+    )
+    forecast = {
+        "forecast_date": today,
+        "temperature_max_c": 30.0,
+        "temperature_min_c": 20.0,
+        "day_weather_text": "晴",
+        "night_weather_text": "多云",
+        "precipitation_probability_percent": None,
+        "humidity_percent": None,
+        "wind_speed_ms": None,
+        "wind_direction": None,
+        "uv_index": None,
+    }
+
+    with open_database() as connection:
+        result = generate_travel_advice(
+            connection,
+            1,
+            run_slot="morning",
+            forecasts={city_id: forecast for city_id in range(1, 9)},
+        )
+
+    assert result["travel_date"] == today
+
+
+def test_morning_advice_falls_back_when_all_forecasts_fail(monkeypatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        "backend.travel_advice_service.DeepSeekClient.generate_text",
+        lambda _client, prompt: prompts.append(prompt) or VALID_ADVICE,
+    )
+    with open_database() as connection:
+        connection.execute(
+            "UPDATE weather_observations SET observation_date = %s",
+            (current_date().isoformat(),),
+        )
+        generate_travel_advice(connection, 1, run_slot="morning", forecasts={})
+
+    assert "【预报】" not in prompts[0]
+    assert prompts[0].count("【实况，观测时间") == 8
+
+
+def test_non_morning_advice_uses_observations_and_requires_today_data(monkeypatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        "backend.travel_advice_service.DeepSeekClient.generate_text",
+        lambda _client, prompt: prompts.append(prompt) or VALID_ADVICE,
+    )
+    with open_database() as connection:
+        connection.execute(
+            "UPDATE weather_observations SET observation_date = %s",
+            (current_date().isoformat(),),
+        )
+        generate_travel_advice(
+            connection,
+            1,
+            run_slot="evening",
+            forecasts={1: {"day_weather_text": "不应使用"}},
+        )
+
+    assert "【预报】" not in prompts[0]
+    assert "【实况，观测时间" in prompts[0]
+
+    with open_database() as connection:
+        connection.execute("UPDATE weather_observations SET observation_date = '2026-01-01'")
+        with pytest.raises(RouteWeatherUnavailableError):
+            generate_travel_advice(connection, 1, run_slot="afternoon")
 
 
 def test_valid_advice_failure_after_two_attempts() -> None:

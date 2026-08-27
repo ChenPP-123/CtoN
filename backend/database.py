@@ -148,6 +148,24 @@ SCHEMA_STATEMENTS = (
            advice_failed_count INTEGER NOT NULL DEFAULT 0,
            error_summary TEXT
        )""",
+    """CREATE TABLE IF NOT EXISTS scheduled_update_runs (
+           run_date TEXT NOT NULL,
+           run_slot TEXT NOT NULL
+               CHECK(run_slot IN ('morning', 'afternoon', 'evening')),
+           trigger TEXT NOT NULL CHECK(trigger = 'cron'),
+           status TEXT NOT NULL
+               CHECK(status IN ('running', 'succeeded', 'partial', 'failed', 'skipped')),
+           started_at TEXT NOT NULL,
+           finished_at TEXT,
+           weather_updated_count INTEGER NOT NULL DEFAULT 0,
+           weather_failed_count INTEGER NOT NULL DEFAULT 0,
+           forecast_updated_count INTEGER NOT NULL DEFAULT 0,
+           forecast_failed_count INTEGER NOT NULL DEFAULT 0,
+           advice_generated_count INTEGER NOT NULL DEFAULT 0,
+           advice_failed_count INTEGER NOT NULL DEFAULT 0,
+           error_summary TEXT,
+           PRIMARY KEY(run_date, run_slot)
+       )""",
     """CREATE TABLE IF NOT EXISTS operation_leases (
            lease_name TEXT PRIMARY KEY,
            owner_token TEXT NOT NULL,
@@ -183,7 +201,7 @@ def reset_test_database(database_url: str | None = None) -> None:
     with open_database(selected_url) as connection:
         connection.execute(
             """TRUNCATE TABLE
-                   operation_leases, daily_update_runs, atmosphere_analyses,
+                   operation_leases, scheduled_update_runs, daily_update_runs, atmosphere_analyses,
                    air_quality_observations, travel_reports, weather_observations,
                    route_stations, cities, routes
                RESTART IDENTITY CASCADE"""
